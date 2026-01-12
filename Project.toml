@@ -1,0 +1,11 @@
+name = "BackgammonNet"
+uuid = "11d55574-5027-10f8-1967-3b41d663c34d"
+version = "0.1.0"
+authors = ["Your Name <your.email@example.com>"]
+
+[deps]
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[compat]
+Random = "1.11.0"
