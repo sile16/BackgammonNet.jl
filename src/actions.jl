@@ -13,7 +13,7 @@ end
 
 function action_string(action_idx::Integer)
     l1, l2 = decode_action(action_idx)
-    l_str(l) = l == 0 ? "Pass" : (l == 1 ? "Bar" : string(l - 1))
+    l_str(l) = l == PASS_LOC ? "Pass" : (l == BAR_LOC ? "Bar" : string(l))
     return "$(l_str(l1)) | $(l_str(l2))"
 end
 
@@ -28,7 +28,7 @@ end
     # Logic mirrors game.jl but returns new state instead of mutating
     # Determine indices
     if cp == 0
-        src_idx = (loc == BAR_LOC) ? IDX_P0_BAR : (loc - 1)
+        src_idx = (loc == BAR_LOC) ? IDX_P0_BAR : loc
         if loc == BAR_LOC
             tgt_idx = Int(die)
         else
@@ -49,7 +49,7 @@ end
             p0 = incr_count(p0, tgt_idx)
         end
     else
-        src_idx = (loc == BAR_LOC) ? IDX_P1_BAR : (25 - (loc - 1))
+        src_idx = (loc == BAR_LOC) ? IDX_P1_BAR : (25 - loc)
         if loc == BAR_LOC
             tgt_idx = 25 - Int(die)
         else
@@ -88,7 +88,7 @@ function is_move_legal_bits(p0::UInt128, p1::UInt128, cp::Integer, loc::Integer,
         src_idx = bar_idx
         if get_count(p_my, src_idx) == 0; return false; end
     else
-        canon = loc - 1
+        canon = loc
         src_idx = (cp == 0) ? canon : (25 - canon)
         if get_count(p_my, src_idx) == 0; return false; end
         if get_count(p_my, bar_idx) > 0; return false; end
@@ -153,10 +153,10 @@ function get_legal_source_locs(p0::UInt128, p1::UInt128, cp::Integer, die::Integ
         return locs
     end
     
-    # Points Check (Canon 1..24 -> Loc 2..25)
-    for loc in 2:25
+    # Points Check (Canon 1..24)
+    for loc in 1:24
         # Optimization: only check if checker exists
-        canon = loc - 1
+        canon = loc
         src_idx = cp == 0 ? canon : 25 - canon
         if get_count(p_my, src_idx) > 0
             if is_move_legal_bits(p0, p1, cp, loc, die)
@@ -169,6 +169,10 @@ function get_legal_source_locs(p0::UInt128, p1::UInt128, cp::Integer, die::Integ
 end
 
 function get_legal_actions(g::BackgammonGame)
+    if is_chance_node(g)
+        return collect(1:21)
+    end
+    
     d1 = Int(g.dice[1])
     d2 = Int(g.dice[2])
     cp = g.current_player
@@ -234,8 +238,8 @@ function get_legal_actions(g::BackgammonGame)
     function usage(act)
         l1, l2 = decode_action(act)
         u = 0
-        if l1 != 0; u += 1; end
-        if l2 != 0; u += 1; end
+        if l1 != PASS_LOC; u += 1; end
+        if l2 != PASS_LOC; u += 1; end
         return u
     end
     
@@ -243,14 +247,14 @@ function get_legal_actions(g::BackgammonGame)
     filter!(a -> usage(a) == max_u, actions)
     
     if max_u == 1 && d1 != d2
-        can_use_d1 = any(a -> decode_action(a)[1] != 0, actions)
-        can_use_d2 = any(a -> decode_action(a)[2] != 0, actions)
+        can_use_d1 = any(a -> decode_action(a)[1] != PASS_LOC, actions)
+        can_use_d2 = any(a -> decode_action(a)[2] != PASS_LOC, actions)
         
         if can_use_d1 && can_use_d2
             if d1 > d2
-                filter!(a -> decode_action(a)[1] != 0, actions)
+                filter!(a -> decode_action(a)[1] != PASS_LOC, actions)
             elseif d2 > d1
-                filter!(a -> decode_action(a)[2] != 0, actions)
+                filter!(a -> decode_action(a)[2] != PASS_LOC, actions)
             end
         end
     end

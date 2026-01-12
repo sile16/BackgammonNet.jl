@@ -1,5 +1,9 @@
 using StaticArrays
 
+# Constants for observation (Canonical indices)
+const BAR_IDX = 25
+const OPP_BAR_IDX = 26
+
 function observe_fast(g::BackgammonGame)
     # 34 elements
     # Board (28) / 15.0
@@ -13,34 +17,13 @@ function observe_fast(g::BackgammonGame)
     end
     
     # Dice
-    # pgx logic:
-    # is_doubles = dice[0] == dice[1]
-    # remaining_dice = is_doubles ? remaining_actions * 2 : 2 (actually just remaining_actions count?)
-    # Wait, pgx logic:
-    # remaining_actions_from_dice: doubles->2, single->1.
-    # _remaining_dice_count:
-    #   if doubles: return remaining_actions * 2. (So 2 actions left -> 4 dice. 1 action -> 2 dice).
-    #   if single: count dice values.
-    # Wait, single: "remaining_actions" is global.
-    # If 1 remaining action (single), we check which dice are still valid?
-    # Actually, in single mode, we assume dice are consumed by action.
-    # But `remaining_actions` is 1.
-    # For single, we have 2 dice. We play 1 action (using both).
-    # So if remaining=1, we have both dice?
-    # pgx `_remaining_dice_count`:
-    #   "(dice == die_val).sum()" for non-doubles.
-    #   So it just counts the dice in `state._dice`.
-    #   Since `state._dice` doesn't change in pgx (constant for turn), 
-    #   and `remaining_actions` is 1 (start) or 0 (end).
-    #   So if remaining=1, show all dice.
-    
     d1 = g.dice[1]
     d2 = g.dice[2]
     is_doubles = (d1 == d2)
     
     dice_counts = zeros(Int, 6)
     
-    if g.remaining_actions > 0
+    if g.remaining_actions > 0 && d1 > 0 && d2 > 0
         if is_doubles
             # remaining_actions: 2 -> 4 dice. 1 -> 2 dice.
             count = Int(g.remaining_actions) * 2
@@ -68,7 +51,7 @@ function observe_full(g::BackgammonGame)
     fast = observe_fast(g)
     obs[1:34] = fast
     
-    # 2. Heuristics (Same as before)
+    # 2. Heuristics
     min_my = 25
     max_opp = 0
     my_pip = 0
