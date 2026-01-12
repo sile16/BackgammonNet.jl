@@ -42,41 +42,6 @@ end
     end
     
     @testset "Legal Actions: Non-Doubles" begin
-        # 6-1. Bar(1), Point 1(14). Blocked 2, 7.
-        # D1=1, D2=6.
-        # Valid Sources for D1: Bar(1).
-        # Valid Sources for D2: Bar(1).
-        
-        # Bar(1) w/ D1(1) -> Target 1. Valid (own stack).
-        # Bar(1) w/ D2(6) -> Target 6. Valid (empty).
-        
-        # Action (L1, L2). L1 uses D1, L2 uses D2.
-        # Case 1: L1=Bar. (Enters at 1).
-        #   Next Board: Checker at 1.
-        #   Next Valid Sources for D2(6):
-        #     Bar (empty now).
-        #     Point 1 (15 checkers). Can move 1->7? Blocked.
-        #     No legal moves for D2?
-        #     Wait, from Bar->1. Point 1 has 15.
-        #     Target 7 (1+6) is blocked.
-        #     So D2 has no moves.
-        #     Action: (Bar, Pass).
-        
-        # Case 2: L2=Bar. (Enters at 6).
-        #   Next Board: Checker at 6.
-        #   Next Valid Sources for D1(1):
-        #     Bar (empty).
-        #     Point 1 (14 checkers). Can move 1->2? Blocked.
-        #     Point 6 (1 checker). Can move 6->7? Blocked.
-        #     No legal moves for D1.
-        #     Action: (Pass, Bar).
-        
-        # Max Dice Usage: Both use 1 die.
-        # Must play higher die (D2=6).
-        # Action (Pass, Bar) uses D2.
-        # Action (Bar, Pass) uses D1.
-        # Expect only (Pass, Bar).
-        
         b = zeros(MVector{28, Int8})
         b[25] = 1 # Bar
         b[1] = 14 # Point 1
@@ -86,11 +51,9 @@ end
         # D1=1, D2=6
         g = make_test_game(board=b, dice=(1, 6))
         
-        actions = BackgammonNet.get_legal_actions(g)
+        actions = legal_actions(g)
         
-        # Encode (Pass, Bar) -> (0, 1). 0*26 + 1 + 1 = 2.
-        # Encode (Bar, Pass) -> (1, 0). 1*26 + 0 + 1 = 27.
-        
+        # Encode (Pass, Bar) -> (0, 1).
         a_pass_bar = BackgammonNet.encode_action(0, 1)
         
         @test length(actions) == 1
@@ -98,37 +61,13 @@ end
     end
     
     @testset "Legal Actions: Doubles" begin
-        # 2-2. 2 actions of 2 moves.
-        # Board: Point 6(1), Point 8(1).
-        # D=2.
-        
         b = zeros(MVector{28, Int8})
         b[6] = 1
         b[8] = 1
-        # 6->8 (blocked? no). 8->10.
         
         g = make_test_game(board=b, dice=(2, 2), remaining=2)
         
-        actions = BackgammonNet.get_legal_actions(g)
-        
-        # Sources for 2: 6, 8.
-        # S1=6. Next: 8(2 checkers).
-        #   S2 for 2 from Next:
-        #     6 (0 checkers).
-        #     8 (2 checkers). Valid 8->10.
-        #     Action (6, 8).
-        # S1=8. Next: 10(1 checker).
-        #   S2 for 2 from Next:
-        #     6 (1 checker). Valid 6->8.
-        #     10 (1 checker). Valid 10->12.
-        #     Action (8, 6), (8, 10).
-        
-        # Expect (6, 8), (8, 6), (8, 10).
-        
-        # Locations:
-        # 6 -> Loc 7.
-        # 8 -> Loc 9.
-        # 10 -> Loc 11.
+        actions = legal_actions(g)
         
         a1 = BackgammonNet.encode_action(7, 9)
         a2 = BackgammonNet.encode_action(9, 7)
@@ -140,21 +79,10 @@ end
     end
     
     @testset "Play" begin
-        # Non-doubles: 3-4.
-        # Point 13 (Loc 14).
-        # Move 13->16 (3), 13->17 (4).
         b = zeros(MVector{28, Int8})
         b[13] = 2
         
         g = make_test_game(board=b, dice=(3, 4))
-        
-        # Action (14, 14).
-        # 14->17 (3). 14->18 (4).
-        # But wait, action implies L1(D1) and L2(D2).
-        # D1=3, D2=4.
-        # L1=14. 13->16.
-        # L2=14. 13->17.
-        # Result: Checker at 16, Checker at 17.
         
         act = BackgammonNet.encode_action(14, 14)
         BackgammonNet.play!(g, act)
@@ -169,4 +97,100 @@ end
         @test g.current_player == 1 # Switched
     end
 
+    @testset "Game Rules" begin
+        
+        @testset "Bar Entry & Blocking" begin
+            b = zeros(MVector{28, Int8})
+            b[25] = 1 # Bar
+            b[10] = 1
+            b[3] = -2 # Blocked
+            b[4] = -1 # Blot (Hit)
+            
+            g = make_test_game(board=b, dice=(3, 4))
+            
+            actions = legal_actions(g)
+            
+            # Die 3 blocked. Die 4 (Hit) legal.
+            # Must use Die 4 from Bar.
+            # Then Die 3 from board.
+            # Action (L1, L2). L1 uses D1(3), L2 uses D2(4).
+            # L2 must be Bar (1).
+            # L1 must be from board (Loc 5->8 or Loc 11->14).
+            
+            a1 = BackgammonNet.encode_action(5, 1) # 4->7(d3), Bar->4(d4)
+            a2 = BackgammonNet.encode_action(11, 1) # 10->13(d3), Bar->4(d4)
+            
+            @test length(actions) > 0
+            for a in actions
+                l1, l2 = BackgammonNet.decode_action(a)
+                @test l2 == 1 # Second slot (D2) MUST be from Bar
+            end
+            
+            @test a1 in actions
+            @test a2 in actions
+        end
+        
+        @testset "Bearing Off: Exact & Over" begin
+            b = zeros(MVector{28, Int8})
+            b[20] = 1
+            b[24] = 1
+            
+            g = make_test_game(board=b, dice=(6, 1))
+            
+            actions = legal_actions(g)
+            
+            # Action (20, 24) -> L1=20(d6), L2=24(d1). Legal.
+            # Action (21, 20) -> L1=21(d6), L2=20(d1). Legal (20->21, 21->Off).
+            
+            a_20_24 = BackgammonNet.encode_action(21, 25) # (20, 24)
+            a_20_21 = BackgammonNet.encode_action(22, 21) # (21, 20)
+            
+            @test a_20_24 in actions
+            @test a_20_21 in actions
+            
+            # (24, 20) implies L1=24(d6). Illegal.
+            a_24_20 = BackgammonNet.encode_action(25, 21)
+            @test !(a_24_20 in actions)
+        end
+        
+        @testset "Winning Condition" begin
+            b = zeros(MVector{28, Int8})
+            b[27] = 14 # Off
+            b[24] = 1
+            
+            g = make_test_game(board=b, dice=(1, 2))
+            
+            # Move 24->Off (1).
+            act = BackgammonNet.encode_action(25, 0) # 25->Off, Pass
+            
+            BackgammonNet.play!(g, act)
+            
+            @test g.board[27] == 15
+            @test g.terminated == true
+            @test g.reward == 1.0f0
+        end
+        
+        @testset "Hitting" begin
+            b = zeros(MVector{28, Int8})
+            b[1] = 1
+            b[2] = -1 # Opponent Blot
+            
+            g = make_test_game(board=b, dice=(1, 6))
+            
+            # Move 1->2 (Die 1).
+            # Action (2, 3).
+            act = BackgammonNet.encode_action(2, 3) 
+            
+            BackgammonNet.play!(g, act)
+            
+            # Turn Switched!
+            # Opponent Bar was -1. Became 1 (Hit).
+            # Flipped: My New Bar (25) = OppBar (26) = -(-1) = 1.
+            # My checker at 8 (index 8). Flipped: 25-8=17. Value -1.
+            
+            @test g.board[25] == 1 # Opponent on Bar
+            @test g.board[17] == -1 # My checker (now opponent)
+        end
+    end
+    
 end
