@@ -376,29 +376,19 @@ end
                         @test winner(g) == 0
                 
                                         # P1 Win - Gammon
+                        b = zeros(MVector{28, Int8})
+                        b[28] = -14 # P1 Off (Index 28, negative)
+                        b[1] = -1   # P1 at Physical 1 (Canonical 24)
+                        b[7] = 1    # P0 at Physical 7 (Outside P1 home 1-6)
+                        
+                        g = make_test_game(board=b, dice=(1, 2), current_player=1)
+                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+                        
+                        @test g.terminated
+                        @test g.reward == -2.0f0
+                        @test winner(g) == 1
                 
-                                        b = zeros(MVector{28, Int8})
-                
-                                        b[27] = 14 # My Off (P1 Off when cp=1)
-                
-                                        b[24] = 1  # Canonical 24 for P1 (Physical 1)
-                
-                                        # P0 has zero off
-                
-                                        g = make_test_game(board=b, dice=(1, 2), current_player=1)
-                
-                                        # For P1, canon 24 is physical 1.
-                
-                                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                
-                                        @test g.terminated
-                
-                                        @test g.reward == -2.0f0
-                
-                                        @test winner(g) == 1
-                
-                                
-                                                # P0 Win - Backgammon (via bar)
+                        # P0 Win - Backgammon (via bar)
                         b = zeros(MVector{28, Int8})
                         b[27] = 14
                         b[24] = 1
@@ -418,9 +408,10 @@ end
 
                         # P1 Win - Backgammon (via home board)
                         b = zeros(MVector{28, Int8})
-                        b[27] = 14
-                        b[24] = 1
-                        b[19] = -1 # P0 in P1's home (canonical 19 for P1 = physical 6)
+                        b[28] = -14 # P1 Off
+                        b[1] = -1   # P1 at Physical 1
+                        b[2] = 1    # P0 in P1's home (Physical 2)
+                        
                         g = make_test_game(board=b, dice=(1, 2), current_player=1)
                         apply_action!(g, BackgammonNet.encode_action(24, PASS))
                         @test g.reward == -3.0f0
