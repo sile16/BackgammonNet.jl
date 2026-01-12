@@ -64,12 +64,11 @@ function winner(g::BackgammonGame)
     return g.reward > 0 ? Int8(0) : Int8(1)
 end
 
-function reset!(g::BackgammonGame)
+function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing)
     p0 = (UInt128(2) << (1<<2)) | (UInt128(5) << (12<<2)) | (UInt128(3) << (17<<2)) | (UInt128(5) << (19<<2))
     p1 = (UInt128(5) << (6<<2)) | (UInt128(3) << (8<<2)) | (UInt128(5) << (13<<2)) | (UInt128(2) << (24<<2))
 
-    rng = Random.default_rng()
-    cp = rand(rng, 0:1)
+    cp = isnothing(first_player) ? rand(Random.default_rng(), 0:1) : Int(first_player)
 
     g.p0 = p0
     g.p1 = p1
@@ -132,12 +131,11 @@ function Base.getindex(g::BackgammonGame, i::Int)
     return Int8(0)
 end
 
-function initial_state()
+function initial_state(; first_player::Union{Nothing, Integer}=nothing)
     p0 = (UInt128(2) << (1<<2)) | (UInt128(5) << (12<<2)) | (UInt128(3) << (17<<2)) | (UInt128(5) << (19<<2))
     p1 = (UInt128(5) << (6<<2)) | (UInt128(3) << (8<<2)) | (UInt128(5) << (13<<2)) | (UInt128(2) << (24<<2))
 
-    rng = Random.default_rng()
-    current_player = rand(rng, 0:1)
+    cp = isnothing(first_player) ? rand(Random.default_rng(), 0:1) : Int(first_player)
 
     history = Int[]
     sizehint!(history, 120)  # Pre-allocate for typical game length
@@ -147,7 +145,7 @@ function initial_state()
         SVector{2, Int8}(0, 0),
         Int8(1),
         Int8(0),
-        Int8(current_player),
+        Int8(cp),
         false,
         0.0f0,
         history
@@ -263,13 +261,13 @@ function sample_chance!(g::BackgammonGame, rng::AbstractRNG=Random.default_rng()
     # Continously apply random chance actions until a deterministic state is returned
     iters = 0
     max_iters = 1000
-    
+
     while is_chance_node(g)
         iters += 1
         if iters > max_iters
             error("Infinite loop detected in sample_chance! (exceeded $max_iters iterations)")
         end
-        
+
         # Sample outcome
         r = rand(rng, Float32)
         c = 0.0f0
@@ -281,10 +279,10 @@ function sample_chance!(g::BackgammonGame, rng::AbstractRNG=Random.default_rng()
                 break
             end
         end
-        
+
         apply_chance!(g, idx)
     end
-    
+
     return g
 end
 

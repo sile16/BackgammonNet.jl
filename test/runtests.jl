@@ -345,11 +345,31 @@ end
                         sample_chance!(g)
                         apply_action!(g, legal_actions(g)[1])
                         @test length(g.history) > 0
-                        
+
                         reset!(g)
                         @test length(g.history) == 0
                         @test is_chance_node(g)
                         @test g.turn == 0
+                    end
+
+                    @testset "First Player Selection" begin
+                        # Test initial_state with explicit first_player
+                        g0 = initial_state(first_player=0)
+                        @test g0.current_player == 0
+
+                        g1 = initial_state(first_player=1)
+                        @test g1.current_player == 1
+
+                        # Test reset! with explicit first_player
+                        reset!(g0, first_player=1)
+                        @test g0.current_player == 1
+
+                        reset!(g1, first_player=0)
+                        @test g1.current_player == 0
+
+                        # Test default (random) still works
+                        g = initial_state()
+                        @test g.current_player in [0, 1]
                     end
                 
                     @testset "Observation" begin
