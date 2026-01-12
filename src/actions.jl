@@ -160,5 +160,12 @@ function get_legal_actions(g::BackgammonGame)
         end
     end
     
-    return actions
-end
+        return actions
+    
+    end
+    
+    
+    
+    const legal_actions = get_legal_actions
+    
+    

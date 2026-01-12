@@ -128,3 +128,4 @@ function observe_full(g::BackgammonGame)
 end
 
 const vector_observation = observe_full
+const observe = observe_full
