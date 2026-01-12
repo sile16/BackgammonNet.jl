@@ -13,6 +13,22 @@ const IDX_P1_BAR = 27
 const PASS_LOC = 25
 const BAR_LOC = 0
 
+# --- Precomputed Bitmasks for Bearing-Off Validation ---
+# Each nibble is 4 bits, so index i is at bit position (i << 2)
+# Mask for indices 1-18 (P0 must clear these before bearing off)
+const MASK_1_18 = reduce(|, UInt128(0xF) << (i << 2) for i in 1:18)
+# Mask for indices 7-24 (P1 must clear these before bearing off)
+const MASK_7_24 = reduce(|, UInt128(0xF) << (i << 2) for i in 7:24)
+
+# Precomputed masks for over-bear validation (checking higher points)
+# For P0: indices 19-24 are home board
+const MASKS_19_TO = ntuple(i -> i < 19 ? UInt128(0) : reduce(|, UInt128(0xF) << (j << 2) for j in 19:(i-1); init=UInt128(0)), 25)
+# For P1: indices 1-6 are home board
+const MASKS_TO_6 = ntuple(i -> i > 6 ? UInt128(0) : reduce(|, UInt128(0xF) << (j << 2) for j in (i+1):6; init=UInt128(0)), 6)
+
+# Helper to check if any checkers exist in masked region
+@inline has_checkers(board::UInt128, mask::UInt128) = (board & mask) != 0
+
 mutable struct BackgammonGame
     p0::UInt128 # Player 0 Checkers
     p1::UInt128 # Player 1 Checkers
@@ -51,10 +67,10 @@ end
 function reset!(g::BackgammonGame)
     p0 = (UInt128(2) << (1<<2)) | (UInt128(5) << (12<<2)) | (UInt128(3) << (17<<2)) | (UInt128(5) << (19<<2))
     p1 = (UInt128(5) << (6<<2)) | (UInt128(3) << (8<<2)) | (UInt128(5) << (13<<2)) | (UInt128(2) << (24<<2))
-    
+
     rng = Random.default_rng()
     cp = rand(rng, 0:1)
-    
+
     g.p0 = p0
     g.p1 = p1
     g.dice = SVector{2, Int8}(0, 0)
@@ -64,6 +80,7 @@ function reset!(g::BackgammonGame)
     g.terminated = false
     g.reward = 0.0f0
     empty!(g.history)
+    sizehint!(g.history, 120)  # Pre-allocate for typical game length
     return g
 end
 
@@ -118,10 +135,13 @@ end
 function initial_state()
     p0 = (UInt128(2) << (1<<2)) | (UInt128(5) << (12<<2)) | (UInt128(3) << (17<<2)) | (UInt128(5) << (19<<2))
     p1 = (UInt128(5) << (6<<2)) | (UInt128(3) << (8<<2)) | (UInt128(5) << (13<<2)) | (UInt128(2) << (24<<2))
-    
+
     rng = Random.default_rng()
     current_player = rand(rng, 0:1)
-    
+
+    history = Int[]
+    sizehint!(history, 120)  # Pre-allocate for typical game length
+
     return BackgammonGame(
         p0, p1,
         SVector{2, Int8}(0, 0),
@@ -129,7 +149,8 @@ function initial_state()
         Int8(0),
         Int8(current_player),
         false,
-        0.0f0
+        0.0f0,
+        history
     )
 end
 
@@ -173,6 +194,16 @@ function chance_outcomes(g::BackgammonGame)
     return collect(zip(1:21, DICE_PROBS))
 end
 
+"""
+    apply_action!(g::BackgammonGame, action_idx::Integer)
+
+Apply a deterministic action to the game state.
+
+!!! warning "Safety"
+    This function assumes `action_idx` is a valid action from `legal_actions(g)`.
+    Passing an illegal action will corrupt the bitboard state. This design is
+    intentional for RL performance—use `legal_actions(g)` to get valid actions.
+"""
 function apply_action!(g::BackgammonGame, action_idx::Integer)
     if g.terminated; return; end
     if is_chance_node(g)
@@ -352,14 +383,15 @@ function play!(g::BackgammonGame, action_idx::Integer)
     step!(g, action_idx)
 end
 
-# Duplicated helper for internal usage (identical to actions.jl logic but operates on Game)
-function is_move_legal(g::BackgammonGame, loc::Integer, die::Integer)
+# Pure function to check move legality on bitboards (shared with actions.jl)
+function is_move_legal_bits(p0::UInt128, p1::UInt128, cp::Integer, loc::Integer, die::Integer)
+    if loc == PASS_LOC; return true; end
+
     # 1. Source Check
-    cp = g.current_player
-    p_my = cp == 0 ? g.p0 : g.p1
-    p_opp = cp == 0 ? g.p1 : g.p0
+    p_my = cp == 0 ? p0 : p1
+    p_opp = cp == 0 ? p1 : p0
     bar_idx = cp == 0 ? IDX_P0_BAR : IDX_P1_BAR
-    
+
     src_idx = 0
     if loc == BAR_LOC
         src_idx = bar_idx
@@ -370,11 +402,11 @@ function is_move_legal(g::BackgammonGame, loc::Integer, die::Integer)
         if get_count(p_my, src_idx) == 0; return false; end
         if get_count(p_my, bar_idx) > 0; return false; end
     end
-    
+
     # 2. Target Check
     tgt_idx = 0
     is_off = false
-    
+
     if cp == 0
         tgt_idx = (loc == BAR_LOC) ? Int(die) : (src_idx + Int(die))
         if tgt_idx > 24; is_off = true; end
@@ -382,28 +414,34 @@ function is_move_legal(g::BackgammonGame, loc::Integer, die::Integer)
         tgt_idx = (loc == BAR_LOC) ? (25 - Int(die)) : (src_idx - Int(die))
         if tgt_idx < 1; is_off = true; end
     end
-    
+
     if !is_off
+        # Block check
         if get_count(p_opp, tgt_idx) >= 2; return false; end
         return true
     else
-        # Bearing Off
+        # Bearing Off - using precomputed bitmasks
         if cp == 0
             if get_count(p_my, IDX_P0_BAR) > 0; return false; end
-            for i in 1:18; if get_count(p_my, i) > 0; return false; end; end
-            
+            if has_checkers(p_my, MASK_1_18); return false; end
+
             if tgt_idx == 25; return true; end
-            # Over-bear: Check 19..src-1
-            for i in 19:(src_idx-1); if get_count(p_my, i) > 0; return false; end; end
+            # Over-bear: Check 19..src_idx-1 using precomputed mask
+            if src_idx >= 20 && has_checkers(p_my, MASKS_19_TO[src_idx]); return false; end
             return true
         else
             if get_count(p_my, IDX_P1_BAR) > 0; return false; end
-            for i in 7:24; if get_count(p_my, i) > 0; return false; end; end
-            
+            if has_checkers(p_my, MASK_7_24); return false; end
+
             if tgt_idx == 0; return true; end
-            # Over-bear: Check src+1..6
-            for i in (src_idx+1):6; if get_count(p_my, i) > 0; return false; end; end
+            # Over-bear: Check src+1..6 using precomputed mask
+            if src_idx <= 5 && has_checkers(p_my, MASKS_TO_6[src_idx]); return false; end
             return true
         end
     end
+end
+
+# Wrapper for game object (calls the pure bitboard function)
+@inline function is_move_legal(g::BackgammonGame, loc::Integer, die::Integer)
+    return is_move_legal_bits(g.p0, g.p1, g.current_player, loc, die)
 end

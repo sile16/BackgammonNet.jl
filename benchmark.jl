@@ -12,42 +12,47 @@ function run_benchmark(duration_seconds=30.0)
     games = 0
     total_actions = 0
     total_turns = 0
-    
+    total_observations = 0
+
     wins_1pt = 0
     wins_2pt = 0
     wins_3pt = 0
-    
-    # Pre-allocate RNG to avoid thread/allocation overhead if possible, 
+
+    # Pre-allocate RNG to avoid thread/allocation overhead if possible,
     # though Random.default_rng() is usually fine.
-    
+
     while time() < end_time
         g = initial_state()
         sample_chance!(g) # Roll initial dice
-        
+
         last_player = current_player(g)
-        
+
         while !game_terminated(g)
+            # Generate observation (as would happen in training/inference)
+            obs = vector_observation(g)
+            total_observations += 1
+
             actions = legal_actions(g)
-            
+
             len = length(actions)
             if len == 0
                 break # Should not happen in standard play
             end
-            
+
             # Simple random policy
             idx = rand(1:len)
             a = actions[idx]
-            
+
             step!(g, a)
             total_actions += 1
-            
+
             cp = current_player(g)
             if cp != last_player
                 total_turns += 1
                 last_player = cp
             end
         end
-        
+
         games += 1
         
         # Analyze reward
@@ -68,10 +73,12 @@ function run_benchmark(duration_seconds=30.0)
     @printf("Total Games:     %d\n", games)
     @printf("Total Actions:   %d\n", total_actions)
     @printf("Total Turns:     %d\n", total_turns)
+    @printf("Total Obs:       %d\n", total_observations)
     println("")
     @printf("Games/sec:       %.2f\n", games / elapsed)
     @printf("Turns/sec:       %.2f\n", total_turns / elapsed)
     @printf("Actions/sec:     %.2f\n", total_actions / elapsed)
+    @printf("Obs/sec:         %.2f\n", total_observations / elapsed)
     println("")
     println("Win Distribution:")
     @printf("  1 pt (Single): %d (%.1f%%)\n", wins_1pt, 100 * wins_1pt / games)
