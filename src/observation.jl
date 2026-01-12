@@ -9,7 +9,7 @@ function observe_fast(g::BackgammonGame)
     
     # Board
     @inbounds for i in 1:28
-        obs[i] = Float32(g.board[i]) / 15.0f0
+        obs[i] = Float32(g[i]) / 15.0f0
     end
     
     # Dice
@@ -75,7 +75,7 @@ function observe_full(g::BackgammonGame)
     opp_pip = 0
     
     @inbounds for i in 1:24
-        val = g.board[i]
+        val = g[i]
         if val > 0
             if i < min_my; min_my = i; end
             my_pip += val * (25 - i)
@@ -84,26 +84,26 @@ function observe_full(g::BackgammonGame)
             opp_pip += (-val) * i
         end
     end
-    my_pip += g.board[BAR_IDX] * 25
-    opp_pip += (-g.board[OPP_BAR_IDX]) * 25
+    my_pip += g[BAR_IDX] * 25
+    opp_pip += (-g[OPP_BAR_IDX]) * 25
     
-    is_race = (g.board[BAR_IDX] == 0 && g.board[OPP_BAR_IDX] == 0 && min_my > max_opp)
+    is_race = (g[BAR_IDX] == 0 && g[OPP_BAR_IDX] == 0 && min_my > max_opp)
     obs[35] = Float32(is_race)
     
-    can_bear_my = (g.board[BAR_IDX] == 0)
+    can_bear_my = (g[BAR_IDX] == 0)
     if can_bear_my
         for i in 1:18
-            if g.board[i] > 0
+            if g[i] > 0
                 can_bear_my = false; break;
             end
         end
     end
     obs[36] = Float32(can_bear_my)
     
-    can_bear_opp = (g.board[OPP_BAR_IDX] == 0)
+    can_bear_opp = (g[OPP_BAR_IDX] == 0)
     if can_bear_opp
         for i in 7:24
-            if g.board[i] < 0
+            if g[i] < 0
                 can_bear_opp = false; break;
             end
         end
@@ -117,7 +117,7 @@ function observe_full(g::BackgammonGame)
     idx_block = 63
     
     @inbounds for i in 1:24
-        val = g.board[i]
+        val = g[i]
         if val == 1; obs[idx_blot] = 1.0f0; elseif val == -1; obs[idx_blot] = -1.0f0; end
         idx_blot += 1
         if val >= 2; obs[idx_block] = 1.0f0; elseif val <= -2; obs[idx_block] = -1.0f0; end
