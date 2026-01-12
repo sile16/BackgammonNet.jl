@@ -377,9 +377,9 @@ end
                 
                                         # P1 Win - Gammon
                         b = zeros(MVector{28, Int8})
-                        b[28] = -14 # P1 Off (Index 28, negative)
-                        b[1] = -1   # P1 at Physical 1 (Canonical 24)
-                        b[7] = 1    # P0 at Physical 7 (Outside P1 home 1-6)
+                        b[27] = 14 # My Off (P1 Off)
+                        b[24] = 1  # My checker at Canon 24 (Physical 1)
+                        b[7] = -1  # Opp (P0) at Canon 7 (Physical 18) - outside P1 home
                         
                         g = make_test_game(board=b, dice=(1, 2), current_player=1)
                         apply_action!(g, BackgammonNet.encode_action(24, PASS))
@@ -390,9 +390,9 @@ end
                 
                         # P0 Win - Backgammon (via bar)
                         b = zeros(MVector{28, Int8})
-                        b[27] = 14
-                        b[24] = 1
-                        b[26] = -1 # P1 on Bar
+                        b[27] = 14 # My Off (P0 Off)
+                        b[24] = 1  # My checker at Canon 24 (Physical 24)
+                        b[26] = -1 # Opp (P1) on Bar
                         g = make_test_game(board=b, dice=(1, 2), current_player=0)
                         apply_action!(g, BackgammonNet.encode_action(24, PASS))
                         @test g.reward == 3.0f0
@@ -401,16 +401,16 @@ end
                         b = zeros(MVector{28, Int8})
                         b[27] = 14
                         b[24] = 1
-                        b[19] = -1 # P1 in P0's home (physical index 19)
+                        b[19] = -1 # Opp (P1) in P0's home (Physical 19)
                         g = make_test_game(board=b, dice=(1, 2), current_player=0)
                         apply_action!(g, BackgammonNet.encode_action(24, PASS))
                         @test g.reward == 3.0f0
 
                         # P1 Win - Backgammon (via home board)
                         b = zeros(MVector{28, Int8})
-                        b[28] = -14 # P1 Off
-                        b[1] = -1   # P1 at Physical 1
-                        b[2] = 1    # P0 in P1's home (Physical 2)
+                        b[27] = 14 # My Off (P1 Off)
+                        b[24] = 1  # My checker at Canon 24 (Physical 1)
+                        b[20] = -1 # Opp (P0) in My home (Canon 20 = Physical 5)
                         
                         g = make_test_game(board=b, dice=(1, 2), current_player=1)
                         apply_action!(g, BackgammonNet.encode_action(24, PASS))
