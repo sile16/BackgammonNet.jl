@@ -794,6 +794,18 @@ end
                         @test g.dice[1] == g.dice[2]  # Must be doubles
                         @test g.remaining_actions == 2  # Doubles give 2 actions
 
+                        # chance_outcomes should keep 21 entries with zeros for non-doubles
+                        reset!(g, doubles_only=true, first_player=0)
+                        outcomes = chance_outcomes(g)
+                        @test length(outcomes) == 21
+                        for (idx, prob) in outcomes
+                            if idx in (1, 7, 12, 16, 19, 21)
+                                @test prob ≈ 1/6 atol=1e-6
+                            else
+                                @test prob == 0.0f0
+                            end
+                        end
+
                         # Test multiple rolls are all doubles
                         for _ in 1:20
                             reset!(g, doubles_only=true, first_player=0)
@@ -836,6 +848,13 @@ end
                                 @test g4.dice[1] == g4.dice[2]  # Still doubles after step!
                             end
                         end
+
+                        # Test chance_outcomes returns all 21 in normal mode with standard probs
+                        g6 = initial_state(first_player=0)
+                        outcomes_normal = chance_outcomes(g6)
+                        @test length(outcomes_normal) == 21
+                        total_prob_normal = sum(p for (_, p) in outcomes_normal)
+                        @test total_prob_normal ≈ 1.0f0 atol=1e-5
                     end
 
                     @testset "Combined short_game and doubles_only" begin

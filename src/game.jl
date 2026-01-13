@@ -277,6 +277,10 @@ const DICE_PROBS = Float32[
 # Indices into DICE_OUTCOMES for doubles only (1-1, 2-2, 3-3, 4-4, 5-5, 6-6)
 const DOUBLES_INDICES = [1, 7, 12, 16, 19, 21]
 
+# Precomputed chance outcomes for doubles_only mode (length 21, zeros for non-doubles)
+const DOUBLES_ONLY_PROBS = ntuple(i -> i in DOUBLES_INDICES ? (1.0f0 / 6.0f0) : 0.0f0, 21)
+const DOUBLES_ONLY_OUTCOMES = collect(zip(1:21, DOUBLES_ONLY_PROBS))
+
 function switch_turn!(g::BackgammonGame)
     g.current_player = 1 - g.current_player
     g.turn = 1 - g.turn
@@ -291,10 +295,16 @@ function is_chance_node(g::BackgammonGame)
     return g.dice[1] == 0 && !g.terminated
 end
 
+# Precomputed standard chance outcomes (avoids allocation on each call)
+const STANDARD_OUTCOMES = collect(zip(1:21, DICE_PROBS))
+
 function chance_outcomes(g::BackgammonGame)
     # Returns vector of (outcome_idx, probability)
-    # Since probabilities are constant for dice rolls in Backgammon:
-    return collect(zip(1:21, DICE_PROBS))
+    if g.doubles_only
+        return DOUBLES_ONLY_OUTCOMES
+    else
+        return STANDARD_OUTCOMES
+    end
 end
 
 """

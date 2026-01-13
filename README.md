@@ -79,7 +79,7 @@ end
 - `apply_chance!(g, outcome_idx)`: Sets dice. Errors if called on player node.
 - `sample_chance!(g, rng)`: continuously applies random chance outcomes until state is deterministic.
 - `is_chance_node(g)`: Returns true if waiting for dice roll.
-- `chance_outcomes(g)`: Returns `[(outcome_idx, prob), ...]`.
+- `chance_outcomes(g)`: Returns `[(outcome_idx, prob), ...]`. In `doubles_only` mode, keeps 21 entries with 0 probability for non-doubles.
 
 ### Observation
 - `vector_observation(g)`: AlphaZero-compatible feature vector.
@@ -91,14 +91,18 @@ end
 
 ## Performance
 
-Benchmarked on Apple M1 MacBook (single core):
+Benchmarked on Apple M1 MacBook (single core) without sanity checks:
 
 | Metric | Value |
 |--------|-------|
-| Games/sec | ~7,100 |
-| Actions/sec | ~800,000 |
-| Observations/sec | ~800,000 |
+| Games/sec | ~4,668 |
+| Actions/sec | ~491,000 |
 | Avg. actions/game | ~112 |
+
+With sanity checks
+   Mode        │ Games/sec │ Actions/sec │ Overhead │
+  ├───────────────────┼───────────┼─────────────┼──────────┤
+  │ Sanity Checks ON  │ 3,452     │ 362,744     │ -26%     │
 
 Run the benchmark yourself:
 ```bash
