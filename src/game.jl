@@ -342,19 +342,26 @@ function apply_action!(g::BackgammonGame, action_idx::Integer)
     d2 = Int(g.dice[2])
     
     legal1 = is_move_legal(g, loc1, d1)
-    
+
     if legal1
+        # Backup full state that apply_single_move! can modify
         p0_bak, p1_bak = g.p0, g.p1
+        terminated_bak, reward_bak = g.terminated, g.reward
         apply_single_move!(g, loc1, d1)
-        
+
         if is_move_legal(g, loc2, d2)
             apply_single_move!(g, loc2, d2)
         else
+            # Restore full state before trying alternate ordering
             g.p0, g.p1 = p0_bak, p1_bak
+            g.terminated, g.reward = terminated_bak, reward_bak
             if is_move_legal(g, loc2, d2)
                 apply_single_move!(g, loc2, d2)
                 apply_single_move!(g, loc1, d1)
             else
+                # This branch should only be reached with invalid actions
+                # when ENABLE_SANITY_CHECKS=false. Apply in original order
+                # since neither ordering works (defensive fallback).
                 apply_single_move!(g, loc1, d1)
                 apply_single_move!(g, loc2, d2)
             end
