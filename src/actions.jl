@@ -351,8 +351,7 @@ for membership testing.
 """
 function is_action_valid(g::BackgammonGame, action_idx::Integer)
     # Guard against chance nodes - no deterministic actions are valid
-    # Uses && to match is_chance_node() semantics (both dice must be 0)
-    if g.dice[1] == 0 && g.dice[2] == 0
+    if is_chance_node(g)
         return false
     end
 

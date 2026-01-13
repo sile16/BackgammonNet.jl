@@ -370,11 +370,10 @@ function Base.getindex(g::BackgammonGame, i::Integer)
     elseif i == 27 # My Off
         idx = cp == 0 ? IDX_P0_OFF : IDX_P1_OFF
         return Int8(get_count(p_my, idx))
-    elseif i == 28 # Opp Off
+    else # i == 28, Opp Off
         idx = cp == 0 ? IDX_P1_OFF : IDX_P0_OFF
         return Int8(-Int(get_count(p_opp, idx)))
     end
-    return Int8(0)
 end
 
 """
