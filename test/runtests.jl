@@ -1940,5 +1940,140 @@ end
         end
     end
 
+    @testset "Dice Encoding Edge Cases" begin
+        # Test dice encoding at chance node (dice = 0, 0)
+        g = initial_state(first_player=0)
+        @test is_chance_node(g)
+        obs = BackgammonNet.observe_fast(g)
+        # Dice indices 29-34 should all be zero at chance node
+        @test all(obs[29:34] .== 0.0f0)
+
+        # Test with remaining_actions = 0 (edge case that shouldn't occur in normal play)
+        b = zeros(MVector{28, Int8})
+        b[1] = 1
+        g2 = make_test_game(board=b, dice=(3, 4), remaining=0, current_player=0)
+        obs2 = BackgammonNet.observe_fast(g2)
+        # With remaining_actions=0, dice encoding condition fails, so dice should be zero
+        @test all(obs2[29:34] .== 0.0f0)
+
+        # Test with d1=0 (partial invalid state)
+        g3 = make_test_game(board=b, dice=(0, 4), remaining=1, current_player=0)
+        obs3 = BackgammonNet.observe_fast(g3)
+        @test all(obs3[29:34] .== 0.0f0)
+
+        # Test with d2=0 (partial invalid state)
+        g4 = make_test_game(board=b, dice=(3, 0), remaining=1, current_player=0)
+        obs4 = BackgammonNet.observe_fast(g4)
+        @test all(obs4[29:34] .== 0.0f0)
+    end
+
+    @testset "Observation Blot/Block Reset" begin
+        # Test that blot/block indices are properly reset between calls
+        buf = Vector{Float32}(undef, 86)
+
+        # First state: blot at point 5, block at point 10
+        b1 = zeros(MVector{28, Int8})
+        b1[5] = 1   # My blot
+        b1[10] = 3  # My block
+        g1 = make_test_game(board=b1, dice=(1, 2), current_player=0)
+        BackgammonNet.observe_full!(buf, g1)
+        @test buf[38 + 5] == 1.0f0   # Blot at 5
+        @test buf[62 + 10] == 1.0f0  # Block at 10
+
+        # Second state: different positions - blot at 15, block at 20
+        b2 = zeros(MVector{28, Int8})
+        b2[15] = 1   # My blot
+        b2[20] = 2   # My block
+        g2 = make_test_game(board=b2, dice=(1, 2), current_player=0)
+        BackgammonNet.observe_full!(buf, g2)
+
+        # Old positions should be cleared
+        @test buf[38 + 5] == 0.0f0   # No blot at 5 anymore
+        @test buf[62 + 10] == 0.0f0  # No block at 10 anymore
+
+        # New positions should be set
+        @test buf[38 + 15] == 1.0f0  # Blot at 15
+        @test buf[62 + 20] == 1.0f0  # Block at 20
+
+        # Third state: empty board - all blot/block should be zero
+        b3 = zeros(MVector{28, Int8})
+        g3 = make_test_game(board=b3, dice=(1, 2), current_player=0)
+        BackgammonNet.observe_full!(buf, g3)
+        @test all(buf[39:62] .== 0.0f0)  # All blots zero
+        @test all(buf[63:86] .== 0.0f0)  # All blocks zero
+    end
+
+    @testset "Pip Count Difference Feature" begin
+        # Test pip count calculation (index 38, normalized by 375)
+        # P0 perspective: my_pip - opp_pip
+
+        # Scenario 1: Equal pip counts
+        b1 = zeros(MVector{28, Int8})
+        b1[12] = 1   # My checker at 12 -> pip = 25-12 = 13
+        b1[13] = -1  # Opp checker at 13 -> pip = 13
+        g1 = make_test_game(board=b1, dice=(1, 2), current_player=0)
+        obs1 = vector_observation(g1)
+        @test obs1[38] ≈ 0.0f0 atol=1e-5  # Equal pips -> 0
+
+        # Scenario 2: I'm ahead (lower pip count is better)
+        b2 = zeros(MVector{28, Int8})
+        b2[24] = 1   # My checker at 24 -> pip = 25-24 = 1
+        b2[1] = -1   # Opp checker at 1 -> pip = 1
+        g2 = make_test_game(board=b2, dice=(1, 2), current_player=0)
+        obs2 = vector_observation(g2)
+        @test obs2[38] ≈ 0.0f0 atol=1e-5  # Same pip -> 0
+
+        # Scenario 3: I'm behind (positive pip diff = I have more pips)
+        b3 = zeros(MVector{28, Int8})
+        b3[1] = 1    # My checker at 1 -> pip = 25-1 = 24
+        b3[24] = -1  # Opp checker at 24 -> pip = 24
+        g3 = make_test_game(board=b3, dice=(1, 2), current_player=0)
+        obs3 = vector_observation(g3)
+        @test obs3[38] ≈ 0.0f0 atol=1e-5  # Same pip -> 0
+
+        # Scenario 4: Large pip difference
+        b4 = zeros(MVector{28, Int8})
+        b4[1] = 5    # My 5 checkers at 1 -> pip = 5 * 24 = 120
+        b4[24] = -5  # Opp 5 checkers at 24 -> pip = 5 * 24 = 120
+        g4 = make_test_game(board=b4, dice=(1, 2), current_player=0)
+        obs4 = vector_observation(g4)
+        @test obs4[38] ≈ 0.0f0 atol=1e-5
+
+        # Scenario 5: I'm way behind
+        b5 = zeros(MVector{28, Int8})
+        b5[1] = 5    # My 5 checkers at 1 -> pip = 5 * 24 = 120
+        b5[23] = -5  # Opp 5 checkers at 23 -> pip = 5 * 23 = 115
+        g5 = make_test_game(board=b5, dice=(1, 2), current_player=0)
+        obs5 = vector_observation(g5)
+        # my_pip=120, opp_pip=115 -> diff=5, normalized: 5/375 ≈ 0.0133
+        @test obs5[38] ≈ 5.0f0 / 375.0f0 atol=1e-5
+
+        # Scenario 6: I'm way ahead
+        b6 = zeros(MVector{28, Int8})
+        b6[23] = 5   # My 5 checkers at 23 -> pip = 5 * 2 = 10
+        b6[1] = -5   # Opp 5 checkers at 1 -> pip = 5 * 1 = 5
+        g6 = make_test_game(board=b6, dice=(1, 2), current_player=0)
+        obs6 = vector_observation(g6)
+        # my_pip=10, opp_pip=5 -> diff=5, normalized: 5/375 ≈ 0.0133
+        @test obs6[38] ≈ 5.0f0 / 375.0f0 atol=1e-5
+
+        # Scenario 7: Bar affects pip count
+        b7 = zeros(MVector{28, Int8})
+        b7[25] = 2   # My 2 checkers on bar -> pip = 2 * 25 = 50
+        b7[26] = -2  # Opp 2 checkers on bar -> pip = 2 * 25 = 50
+        g7 = make_test_game(board=b7, dice=(1, 2), current_player=0)
+        obs7 = vector_observation(g7)
+        @test obs7[38] ≈ 0.0f0 atol=1e-5  # Equal pips
+
+        # Scenario 8: Bar vs board checker comparison
+        b8 = zeros(MVector{28, Int8})
+        b8[25] = 1   # My checker on bar -> pip = 25
+        b8[1] = -1   # Opp checker at 1 -> pip = 1
+        g8 = make_test_game(board=b8, dice=(1, 2), current_player=0)
+        obs8 = vector_observation(g8)
+        # my_pip=25, opp_pip=1 -> diff=24, normalized: 24/375 = 0.064
+        @test obs8[38] ≈ 24.0f0 / 375.0f0 atol=1e-5
+    end
+
 end
 

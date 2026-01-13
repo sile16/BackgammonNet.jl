@@ -66,10 +66,10 @@ Computes race indicator, bearing-off status, pip difference, and blot/block dete
 Writes to indices IDX_RACE through IDX_PIP_DIFF (35-38) and BLOT_OFFSET/BLOCK_OFFSET ranges (39-86).
 """
 @inline function _compute_heuristics!(obs::AbstractVector{Float32}, vals::MVector{BOARD_FEATURE_SIZE, Int8})
-    min_my = BAR_PIP_VALUE
-    max_opp = 0
-    my_pip = 0
-    opp_pip = 0
+    min_my::Int = BAR_PIP_VALUE
+    max_opp::Int = 0
+    my_pip::Int = 0
+    opp_pip::Int = 0
     can_bear_my = (vals[BAR_IDX] == 0)
     can_bear_opp = (vals[OPP_BAR_IDX] == 0)
 
