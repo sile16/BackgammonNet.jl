@@ -215,35 +215,35 @@ end
 # --- Bit Manipulation Helpers ---
 
 """
-    get_count(board::UInt128, idx::Int) -> UInt128
+    get_count(board::UInt128, idx::Integer) -> UInt128
 
 Extract the checker count at position `idx` from a bitboard.
 Each position uses a 4-bit nibble, so index `i` is at bit position `i << 2`.
 Returns 0-15 (though valid counts are 0-15 checkers).
 """
-@inline function get_count(board::UInt128, idx::Int)
+@inline function get_count(board::UInt128, idx::Integer)
     return (board >> (idx << 2)) & 0xF
 end
 
 """
-    incr_count(board::UInt128, idx::Int) -> UInt128
+    incr_count(board::UInt128, idx::Integer) -> UInt128
 
 Increment the checker count at position `idx` by 1.
 Returns a new bitboard with the updated count.
 Warning: Does not check for overflow (count > 15).
 """
-@inline function incr_count(board::UInt128, idx::Int)
+@inline function incr_count(board::UInt128, idx::Integer)
     return board + (UInt128(1) << (idx << 2))
 end
 
 """
-    decr_count(board::UInt128, idx::Int) -> UInt128
+    decr_count(board::UInt128, idx::Integer) -> UInt128
 
 Decrement the checker count at position `idx` by 1.
 Returns a new bitboard with the updated count.
 Warning: Does not check for underflow (count == 0).
 """
-@inline function decr_count(board::UInt128, idx::Int)
+@inline function decr_count(board::UInt128, idx::Integer)
     return board - (UInt128(1) << (idx << 2))
 end
 
@@ -315,7 +315,7 @@ function sanity_check_game(g::BackgammonGame)
 end
 
 # --- Canonical Board Access ---
-function Base.getindex(g::BackgammonGame, i::Int)
+function Base.getindex(g::BackgammonGame, i::Integer)
     cp = g.current_player
     p_my = cp == 0 ? g.p0 : g.p1
     p_opp = cp == 0 ? g.p1 : g.p0
