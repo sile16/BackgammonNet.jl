@@ -66,8 +66,8 @@ end
 ## API Reference
 
 ### Core
-- `initial_state()`: Returns a new game (starts at chance node).
-- `reset!(g)`: Resets game to initial state without reallocating.
+- `initial_state(; first_player=nothing, short_game=false, doubles_only=false)`: Returns a new game (starts at chance node).
+- `reset!(g; first_player=nothing, short_game=false, doubles_only=false)`: Resets game to initial state without reallocating.
 - `legal_actions(g)`: Returns valid action indices.
 - `game_terminated(g)`: Bool.
 - `winner(g)`: Returns winning player ID (0 or 1) or `nothing`.
@@ -83,6 +83,27 @@ end
 
 ### Observation
 - `vector_observation(g)`: AlphaZero-compatible feature vector.
+
+### Initialization Options
+- `first_player`: Set to `0` or `1` to choose starting player, or `nothing` for random.
+- `short_game`: When `true`, uses a modified board position with pieces closer to bearing off (faster games for training).
+- `doubles_only`: When `true`, all dice rolls are doubles (1-1 through 6-6 with uniform probability).
+
+## Performance
+
+Benchmarked on Apple M1 MacBook (single core):
+
+| Metric | Value |
+|--------|-------|
+| Games/sec | ~7,100 |
+| Actions/sec | ~800,000 |
+| Observations/sec | ~800,000 |
+| Avg. actions/game | ~112 |
+
+Run the benchmark yourself:
+```bash
+julia --project benchmark.jl
+```
 
 ## Structure
 - `src/game.jl`: Core structs, step logic, and state management.

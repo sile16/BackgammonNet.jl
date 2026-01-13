@@ -371,7 +371,109 @@ end
                         g = initial_state()
                         @test g.current_player in [0, 1]
                     end
-                
+
+                    @testset "Short Game Mode" begin
+                        # Test initial_state with short_game
+                        g = initial_state(short_game=true, first_player=0)
+                        @test is_chance_node(g)
+
+                        # Verify short game board position for P0 (from canonical perspective)
+                        # P0 at indices: 4(2), 12(1), 15(2), 16(3), 18(3), 21(3), 22(1)
+                        sample_chance!(g)
+                        @test g[4] == 2   # P0 has 2 on point 4
+                        @test g[12] == 1  # P0 has 1 on point 12
+                        @test g[15] == 2  # P0 has 2 on point 15
+                        @test g[16] == 3  # P0 has 3 on point 16
+                        @test g[18] == 3  # P0 has 3 on point 18
+                        @test g[21] == 3  # P0 has 3 on point 21
+                        @test g[22] == 1  # P0 has 1 on point 22
+
+                        # Verify P1 positions (negative from P0 perspective)
+                        # P1 at indices: 1(1), 2(3), 5(3), 7(3), 8(2), 11(1), 19(2)
+                        @test g[1] == -1  # P1 has 1 on point 1
+                        @test g[2] == -3  # P1 has 3 on point 2
+                        @test g[5] == -3  # P1 has 3 on point 5
+                        @test g[7] == -3  # P1 has 3 on point 7
+                        @test g[8] == -2  # P1 has 2 on point 8
+                        @test g[11] == -1 # P1 has 1 on point 11
+                        @test g[19] == -2 # P1 has 2 on point 19
+
+                        # Test reset! with short_game
+                        g2 = initial_state(first_player=0)
+                        reset!(g2, short_game=true, first_player=0)
+                        sample_chance!(g2)
+                        @test g2[4] == 2   # Verify short game position after reset
+                        @test g2[16] == 3
+                    end
+
+                    @testset "Doubles Only Mode" begin
+                        # Test initial_state with doubles_only
+                        g = initial_state(doubles_only=true, first_player=0)
+                        @test g.doubles_only == true
+                        @test is_chance_node(g)
+
+                        # Sample chance and verify we get doubles
+                        sample_chance!(g)
+                        @test g.dice[1] == g.dice[2]  # Must be doubles
+                        @test g.remaining_actions == 2  # Doubles give 2 actions
+
+                        # Test multiple rolls are all doubles
+                        for _ in 1:20
+                            reset!(g, doubles_only=true, first_player=0)
+                            sample_chance!(g)
+                            @test g.dice[1] == g.dice[2]
+                            @test g.dice[1] in 1:6
+                        end
+
+                        # Test reset! preserves doubles_only setting when specified
+                        g2 = initial_state(first_player=0)
+                        @test g2.doubles_only == false
+                        reset!(g2, doubles_only=true, first_player=0)
+                        @test g2.doubles_only == true
+                        sample_chance!(g2)
+                        @test g2.dice[1] == g2.dice[2]
+
+                        # Test that regular game can still roll non-doubles
+                        g3 = initial_state(first_player=0)
+                        non_doubles_found = false
+                        for _ in 1:100
+                            reset!(g3, first_player=0)
+                            sample_chance!(g3)
+                            if g3.dice[1] != g3.dice[2]
+                                non_doubles_found = true
+                                break
+                            end
+                        end
+                        @test non_doubles_found  # Should find at least one non-double in 100 tries
+
+                        # Test doubles_only persists through gameplay (step! calls sample_chance!)
+                        g4 = initial_state(doubles_only=true, first_player=0)
+                        sample_chance!(g4)
+                        for _ in 1:10
+                            if game_terminated(g4)
+                                break
+                            end
+                            actions = legal_actions(g4)
+                            step!(g4, actions[1])
+                            if !game_terminated(g4)
+                                @test g4.dice[1] == g4.dice[2]  # Still doubles after step!
+                            end
+                        end
+                    end
+
+                    @testset "Combined short_game and doubles_only" begin
+                        g = initial_state(short_game=true, doubles_only=true, first_player=0)
+                        @test g.doubles_only == true
+                        sample_chance!(g)
+
+                        # Verify short game position
+                        @test g[4] == 2
+                        @test g[16] == 3
+
+                        # Verify doubles
+                        @test g.dice[1] == g.dice[2]
+                    end
+
                     @testset "Observation" begin
                         g = initial_state()
                         obs = vector_observation(g)

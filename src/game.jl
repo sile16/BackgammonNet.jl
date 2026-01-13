@@ -29,6 +29,21 @@ const MASKS_TO_6 = ntuple(i -> i > 6 ? UInt128(0) : reduce(|, UInt128(0xF) << (j
 # Helper to check if any checkers exist in masked region
 @inline has_checkers(board::UInt128, mask::UInt128) = (board & mask) != 0
 
+# --- Standard Initial Board Position ---
+# P0: 2 on point 1, 5 on point 12, 3 on point 17, 5 on point 19
+const INIT_P0_STANDARD = (UInt128(2) << (1<<2)) | (UInt128(5) << (12<<2)) | (UInt128(3) << (17<<2)) | (UInt128(5) << (19<<2))
+# P1: 5 on point 6, 3 on point 8, 5 on point 13, 2 on point 24
+const INIT_P1_STANDARD = (UInt128(5) << (6<<2)) | (UInt128(3) << (8<<2)) | (UInt128(5) << (13<<2)) | (UInt128(2) << (24<<2))
+
+# --- Short Game Initial Board Position ---
+# From pgx: [0, -1, -3, 0, 2, -3, 0, -3, -2, 0, 0, -1, 1, 0, 0, 2, 3, 0, 3, -2, 0, 3, 1, 0, 0, 0, 0, 0]
+# P0: 2 on 4, 1 on 12, 2 on 15, 3 on 16, 3 on 18, 3 on 21, 1 on 22
+const INIT_P0_SHORT = (UInt128(2) << (4<<2)) | (UInt128(1) << (12<<2)) | (UInt128(2) << (15<<2)) |
+                      (UInt128(3) << (16<<2)) | (UInt128(3) << (18<<2)) | (UInt128(3) << (21<<2)) | (UInt128(1) << (22<<2))
+# P1: 1 on 1, 3 on 2, 3 on 5, 3 on 7, 2 on 8, 1 on 11, 2 on 19
+const INIT_P1_SHORT = (UInt128(1) << (1<<2)) | (UInt128(3) << (2<<2)) | (UInt128(3) << (5<<2)) |
+                      (UInt128(3) << (7<<2)) | (UInt128(2) << (8<<2)) | (UInt128(1) << (11<<2)) | (UInt128(2) << (19<<2))
+
 mutable struct BackgammonGame
     p0::UInt128 # Player 0 Checkers
     p1::UInt128 # Player 1 Checkers
@@ -39,10 +54,15 @@ mutable struct BackgammonGame
     terminated::Bool
     reward::Float32
     history::Vector{Int}
+    doubles_only::Bool # If true, all dice rolls are doubles
 end
 
 function BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew)
-    BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew, Int[])
+    BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew, Int[], false)
+end
+
+function BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew, history)
+    BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew, history, false)
 end
 
 Base.show(io::IO, g::BackgammonGame) = print(io, "BackgammonGame(p=$(g.current_player), dice=$(g.dice), turn=$(g.turn))")
@@ -64,9 +84,10 @@ function winner(g::BackgammonGame)
     return g.reward > 0 ? Int8(0) : Int8(1)
 end
 
-function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing)
-    p0 = (UInt128(2) << (1<<2)) | (UInt128(5) << (12<<2)) | (UInt128(3) << (17<<2)) | (UInt128(5) << (19<<2))
-    p1 = (UInt128(5) << (6<<2)) | (UInt128(3) << (8<<2)) | (UInt128(5) << (13<<2)) | (UInt128(2) << (24<<2))
+function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing,
+                short_game::Bool=false, doubles_only::Bool=false)
+    p0 = short_game ? INIT_P0_SHORT : INIT_P0_STANDARD
+    p1 = short_game ? INIT_P1_SHORT : INIT_P1_STANDARD
 
     cp = isnothing(first_player) ? rand(Random.default_rng(), 0:1) : Int(first_player)
 
@@ -78,6 +99,7 @@ function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing
     g.current_player = cp
     g.terminated = false
     g.reward = 0.0f0
+    g.doubles_only = doubles_only
     empty!(g.history)
     sizehint!(g.history, 120)  # Pre-allocate for typical game length
     return g
@@ -131,9 +153,10 @@ function Base.getindex(g::BackgammonGame, i::Int)
     return Int8(0)
 end
 
-function initial_state(; first_player::Union{Nothing, Integer}=nothing)
-    p0 = (UInt128(2) << (1<<2)) | (UInt128(5) << (12<<2)) | (UInt128(3) << (17<<2)) | (UInt128(5) << (19<<2))
-    p1 = (UInt128(5) << (6<<2)) | (UInt128(3) << (8<<2)) | (UInt128(5) << (13<<2)) | (UInt128(2) << (24<<2))
+function initial_state(; first_player::Union{Nothing, Integer}=nothing,
+                       short_game::Bool=false, doubles_only::Bool=false)
+    p0 = short_game ? INIT_P0_SHORT : INIT_P0_STANDARD
+    p1 = short_game ? INIT_P1_SHORT : INIT_P1_STANDARD
 
     cp = isnothing(first_player) ? rand(Random.default_rng(), 0:1) : Int(first_player)
 
@@ -148,7 +171,8 @@ function initial_state(; first_player::Union{Nothing, Integer}=nothing)
         Int8(cp),
         false,
         0.0f0,
-        history
+        history,
+        doubles_only
     )
 end
 
@@ -171,6 +195,9 @@ const DICE_PROBS = Float32[
     1/36, 2/36,
     1/36
 ]
+
+# Indices into DICE_OUTCOMES for doubles only (1-1, 2-2, 3-3, 4-4, 5-5, 6-6)
+const DOUBLES_INDICES = [1, 7, 12, 16, 19, 21]
 
 function switch_turn!(g::BackgammonGame)
     g.current_player = 1 - g.current_player
@@ -268,15 +295,21 @@ function sample_chance!(g::BackgammonGame, rng::AbstractRNG=Random.default_rng()
             error("Infinite loop detected in sample_chance! (exceeded $max_iters iterations)")
         end
 
-        # Sample outcome
-        r = rand(rng, Float32)
-        c = 0.0f0
-        idx = 21
-        for (i, p) in enumerate(DICE_PROBS)
-            c += p
-            if r <= c
-                idx = i
-                break
+        local idx::Int
+        if g.doubles_only
+            # In doubles_only mode, uniformly sample from the 6 doubles outcomes
+            idx = DOUBLES_INDICES[rand(rng, 1:6)]
+        else
+            # Sample outcome using standard probabilities
+            r = rand(rng, Float32)
+            c = 0.0f0
+            idx = 21
+            for (i, p) in enumerate(DICE_PROBS)
+                c += p
+                if r <= c
+                    idx = i
+                    break
+                end
             end
         end
 
