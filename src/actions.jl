@@ -222,6 +222,9 @@ function get_legal_actions(g::BackgammonGame)
     end
 
     # Filter by max usage - avoid allocating intermediate array
+    # NOTE: This implements the "maximize dice" and "higher die" rules.
+    # These same rules are also implemented in is_action_valid().
+    # If you modify these rules, update is_action_valid() as well.
     if max_usage == 2
         # Fast path: filter in-place, no decode needed for 2-usage check
         filter!(actions) do act
@@ -305,18 +308,13 @@ function is_action_valid(g::BackgammonGame, action_idx::Integer)
 
     if d1 == d2
         # Doubles: loc1 and loc2 both use the same die value
+        # For doubles, only accept the canonical ordering (loc1 then loc2)
+        # to match legal_actions() which generates (first_move, second_move)
         if loc1 != PASS_LOC && loc2 != PASS_LOC
-            # Try loc1 then loc2
+            # Only try loc1 then loc2 (canonical form)
             if is_move_legal_bits(p0, p1, cp, loc1, d1)
                 p0_n, p1_n = apply_move_internal(p0, p1, cp, loc1, d1)
                 if is_move_legal_bits(p0_n, p1_n, cp, loc2, d1)
-                    can_use_both = true
-                end
-            end
-            # Try loc2 then loc1
-            if !can_use_both && is_move_legal_bits(p0, p1, cp, loc2, d1)
-                p0_n, p1_n = apply_move_internal(p0, p1, cp, loc2, d1)
-                if is_move_legal_bits(p0_n, p1_n, cp, loc1, d1)
                     can_use_both = true
                 end
             end
@@ -359,6 +357,9 @@ function is_action_valid(g::BackgammonGame, action_idx::Integer)
     end
 
     # Validate against maximize dice rule
+    # NOTE: This implements the "maximize dice" and "higher die" rules.
+    # These same rules are also implemented in get_legal_actions() filtering.
+    # If you modify these rules, update get_legal_actions() as well.
     if can_use_both
         return true
     end

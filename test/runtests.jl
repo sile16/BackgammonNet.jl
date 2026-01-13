@@ -1515,5 +1515,42 @@ end
                         end
                     end
 
+                    @testset "legal_actions and is_action_valid Agreement" begin
+                        # Verify that is_action_valid agrees with legal_actions membership
+                        # This catches drift between the two implementations of maximize-dice rules
+                        Random.seed!(12345)
+
+                        for _ in 1:50  # Test 50 random positions
+                            g = initial_state()
+                            sample_chance!(g)
+
+                            # Play a few random moves to get varied positions
+                            for _ in 1:rand(0:20)
+                                if game_terminated(g)
+                                    break
+                                end
+                                acts = legal_actions(g)
+                                if isempty(acts)
+                                    break
+                                end
+                                step!(g, rand(acts))
+                            end
+
+                            if game_terminated(g) || is_chance_node(g)
+                                continue
+                            end
+
+                            # Get legal actions
+                            valid_actions = Set(legal_actions(g))
+
+                            # Verify is_action_valid agrees for all possible actions (1-676)
+                            for action in 1:676
+                                expected = action in valid_actions
+                                actual = is_action_valid(g, action)
+                                @test actual == expected
+                            end
+                        end
+                    end
+
                 end
-                
+
