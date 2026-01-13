@@ -1,5 +1,6 @@
 using Test
 using StaticArrays
+using Random
 using BackgammonNet
 
 # Constants for test setup
@@ -320,41 +321,19 @@ end
         @test length(actions) == 1
         @test actions[1] == BackgammonNet.encode_action(PASS, 5)  # PASS d1, use d2 from 5
 
-        # Scenario 3: Both dice can play individually but not together - use higher
-        b = zeros(MVector{28, Int8})
-        b[1] = 1   # Single checker at 1
-        b[3] = -2  # Block at 3
-        b[5] = -2  # Block at 5
-        # Die 2: 1->3 blocked
-        # Die 4: 1->5 blocked
-        # Die 2 then 4: 1->3 blocked
-        # Die 4 then 2: 1->5 blocked
-        # Hmm, both blocked. Let me redo.
-
-        # Better scenario: checker at 1, die 2 and 4
-        # Block at 3 (blocks 1+2=3) AND block at 7 (blocks 5+2 after 1->5)
+        # Scenario 3: Only one die works due to blocking - must use higher die
         b = zeros(MVector{28, Int8})
         b[1] = 1   # Checker at 1
         b[3] = -2  # Block at 3 (blocks die 2: 1+2=3)
         b[7] = -2  # Block at 7 (blocks 5+2 after using die 4)
         g = make_test_game(board=b, dice=(2, 4), current_player=0)
         actions = legal_actions(g)
-        # Die 2: 1->3 blocked
-        # Die 4: 1->5 open, then die 2: 5->7 blocked
-        # Only die 4 works (higher), so valid
+        # Die 2: 1->3 blocked. Die 4: 1->5 open, then 5->7 blocked.
+        # Only die 4 works (higher), so must use it
         @test length(actions) == 1
         @test actions[1] == BackgammonNet.encode_action(PASS, 1)  # PASS d1=2, use d2=4 from point 1
 
-        # Scenario 4: Both dice work individually, neither enables the other - use higher
-        b = zeros(MVector{28, Int8})
-        b[1] = 1   # Single checker
-        b[4] = -2  # Block at 4 (blocks 1+3=4 and 1+1+3 combo)
-        b[5] = -2  # Block at 5 (blocks 1+2+3 combo after 1+2=3)
-        # Die 2: 1->3, then die 3: 3->6... but wait, need to check
-        # Actually: die 2 (1->3), then die 3 (3->6) - is 6 blocked? No.
-        # So both dice CAN be used together. Bad example.
-
-        # Scenario 4 retry: Single checker where sequential moves are blocked
+        # Scenario 4: Both dice blocked - PASS|PASS
         b = zeros(MVector{28, Int8})
         b[1] = 1   # Single checker at 1
         b[3] = -2  # Block 1+2=3
@@ -392,19 +371,16 @@ end
         @test length(actions) == 1
         @test actions[1] == BackgammonNet.encode_action(1, PASS)  # use d1=2 from 1, PASS d2=3
 
-        # Scenario 7: Both dice work individually on same checker - use higher
+        # Scenario 7: Only lower die works (all paths with higher die blocked)
         b = zeros(MVector{28, Int8})
         b[1] = 1   # Single checker at 1
-        b[4] = -2  # Block at 4 (blocks 1+3 and 1+1+3)
-        b[5] = -2  # Block at 5 (blocks 1+2+3 after first move)
-        # Die 2: 1->3, then 3->6? 6 open. So both can be used!
-        # Need to prevent using both...
-        b[6] = -2  # Block at 6 too
+        b[4] = -2  # Block at 4 (blocks die 3: 1+3=4)
+        b[5] = -2  # Block at 5
+        b[6] = -2  # Block at 6 (blocks 3+3=6 after 1->3)
         g = make_test_game(board=b, dice=(2, 3), current_player=0)
         actions = legal_actions(g)
-        # Die 2: 1->3, then die 3: 3->6 blocked
-        # Die 3: 1->4 blocked
-        # So only die 2 works alone
+        # Die 2: 1->3 open, then die 3: 3->6 blocked. Die 3: 1->4 blocked.
+        # Only die 2 works, must use lower die as only option
         @test length(actions) == 1
         @test actions[1] == BackgammonNet.encode_action(1, PASS)
 
@@ -712,20 +688,22 @@ end
     end
                 
                     @testset "Full Random Game" begin
-                        g = initial_state()
-                        sample_chance!(g) # Start with rolled dice
-                        
+                        # Use seeded RNG for reproducibility
+                        rng = Random.MersenneTwister(42)
+                        g = initial_state(first_player=0)
+                        sample_chance!(g, rng) # Start with rolled dice
+
                         step_count = 0
                         max_steps = 10000
-                        
+
                         while !game_terminated(g) && step_count < max_steps
                             actions = legal_actions(g)
                             if isempty(actions)
                                 break
                             end
-                            
-                            a = rand(actions)
-                            step!(g, a)
+
+                            a = actions[rand(rng, 1:length(actions))]
+                            step!(g, a, rng)
                             
                             step_count += 1
                         end

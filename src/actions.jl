@@ -114,6 +114,19 @@ const CHANCE_ACTIONS_DOUBLES_ONLY = copy(DOUBLES_INDICES)  # Only doubles outcom
 
 const PASS_PASS_ACTION = [encode_action(PASS_LOC, PASS_LOC)]  # Pre-allocated for no-move case
 
+"""
+    legal_actions(g::BackgammonGame) -> Vector{Int}
+
+Returns valid action indices for the current state.
+
+At chance nodes: Returns outcome indices (1-21, or 6 doubles-only indices).
+At player nodes: Returns action indices (1-676) encoding two source locations.
+
+Action encoding: `action = loc1*26 + loc2 + 1` where locations are 0-25
+(0=bar, 1-24=points, 25=pass). Use `decode_action(action)` to get `(loc1, loc2)`.
+
+Note: Returns a reference to an internal buffer. Do not mutate the returned vector.
+"""
 function get_legal_actions(g::BackgammonGame)
     if is_chance_node(g)
         return g.doubles_only ? CHANCE_ACTIONS_DOUBLES_ONLY : CHANCE_ACTIONS

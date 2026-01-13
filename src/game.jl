@@ -139,16 +139,17 @@ const ENABLE_SANITY_CHECKS = true
 
 Validates bitboard integrity:
 1. Points 1-24: only one player should have checkers at each point
-2. If board appears to be a real game (15 checkers per player), validates totals
+2. No player should have more than 15 total checkers (catches overflow)
 
 Throws an error if corruption is detected. This catches bugs like:
-- incr_count overflow (if point has 15 checkers and we add one, it wraps to 0 and corrupts next nibble)
-- decr_count underflow (if point has 0 checkers and we subtract)
+- incr_count overflow (if point has 15 checkers and we add one, it corrupts the nibble)
 - Both players occupying the same point (impossible in backgammon)
 
-Note: Total checker validation only runs when both players have exactly 15 checkers,
-indicating a real game state. Test boards with fewer pieces skip total validation
-but still check for same-point corruption.
+Note: This does NOT catch underflow (decr_count on 0 checkers) since the nibble would
+wrap to 15 which is still valid. Underflow bugs would show up as overflow elsewhere
+when the "missing" checker is eventually double-counted.
+
+Test boards with fewer than 15 checkers are allowed and still get same-point validation.
 """
 function sanity_check_bitboard(p0::UInt128, p1::UInt128)
     @static if !ENABLE_SANITY_CHECKS
@@ -174,15 +175,8 @@ function sanity_check_bitboard(p0::UInt128, p1::UInt128)
         p1_total += p1_count
     end
 
-    # Validate total checker counts only for real game states
-    # (Test boards intentionally use fewer checkers for isolated scenario testing)
-    is_real_game = (p0_total == MAX_CHECKERS && p1_total == MAX_CHECKERS)
-    if is_real_game
-        # This is a real game - totals should stay at 15
-        # If we get here and totals aren't 15, something corrupted the state
-        # (This branch is actually unreachable given the condition, but kept for clarity)
-    elseif p0_total > MAX_CHECKERS || p1_total > MAX_CHECKERS
-        # Overflow detected! A player has more than 15 checkers
+    # Check for overflow (more than 15 checkers for any player)
+    if p0_total > MAX_CHECKERS || p1_total > MAX_CHECKERS
         error("Bitboard corruption: P0 has $p0_total checkers, P1 has $p1_total checkers. " *
               "Max is $MAX_CHECKERS. Possible overflow from incr_count.")
     end
@@ -236,6 +230,19 @@ function Base.getindex(g::BackgammonGame, i::Int)
     return Int8(0)
 end
 
+"""
+    initial_state(; first_player=nothing, short_game=false, doubles_only=false) -> BackgammonGame
+
+Create a new backgammon game in the initial position (chance node awaiting dice roll).
+
+# Keyword Arguments
+- `first_player`: Set to `0` or `1` to choose starting player, or `nothing` for random.
+- `short_game`: Use modified board position with pieces closer to bearing off (faster games).
+- `doubles_only`: All dice rolls are doubles (1-1 through 6-6 with uniform probability).
+
+Call `sample_chance!(g)` to roll dice before the first move, or use `step!` which
+handles dice rolls automatically.
+"""
 function initial_state(; first_player::Union{Nothing, Integer}=nothing,
                        short_game::Bool=false, doubles_only::Bool=false)
     p0 = short_game ? INIT_P0_SHORT : INIT_P0_STANDARD
@@ -453,13 +460,20 @@ function sample_chance!(g::BackgammonGame, rng::AbstractRNG=Random.default_rng()
     return g
 end
 
+"""
+    step!(g::BackgammonGame, action::Integer, rng=Random.default_rng()) -> BackgammonGame
+
+High-level step function for RL environments. Applies `action` and automatically
+rolls dice for the next player, ensuring the returned state is always deterministic
+(not a chance node) with valid moves available.
+
+Use this for standard RL training loops where you don't need explicit control
+over dice rolls. For MCTS or explicit stochastic control, use `apply_action!`
+and `apply_chance!` / `sample_chance!` separately.
+"""
 function step!(g::BackgammonGame, action::Integer, rng::AbstractRNG=Random.default_rng())
-    # 1. Apply the deterministic action
     apply_action!(g, action)
-    
-    # 2. Resolve any resulting chance nodes to ensure we return a deterministic state
     sample_chance!(g, rng)
-    
     return g
 end
 
