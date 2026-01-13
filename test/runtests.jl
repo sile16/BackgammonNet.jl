@@ -1464,6 +1464,18 @@ end
                         g = make_test_game(board=b, dice=(1, 2), current_player=0)
                         valid_action = BackgammonNet.encode_action(1, 1)  # 1->2 (d1), 1->3 (d2)
                         @test is_action_valid(g, valid_action)
+
+                        # winner() edge cases
+                        # Non-terminated game returns nothing
+                        g = initial_state(first_player=0)
+                        @test winner(g) === nothing
+
+                        # Terminated game with reward==0 (invalid state) returns nothing
+                        # This can only happen via direct mutation, not normal gameplay
+                        g = initial_state(first_player=0)
+                        g.terminated = true
+                        g.reward = 0.0f0
+                        @test winner(g) === nothing  # Should NOT return 1
                     end
 
                     @testset "Sanity Check Corruption Detection" begin

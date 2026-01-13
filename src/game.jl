@@ -157,11 +157,27 @@ function game_terminated(g::BackgammonGame)
     return g.terminated
 end
 
+"""
+    winner(g::BackgammonGame) -> Union{Nothing, Int8}
+
+Returns the winning player (0 or 1) if the game is terminated, or `nothing` if:
+- The game is not terminated, or
+- The game state is invalid (reward == 0 on a terminated game)
+
+In normal gameplay, a terminated game always has reward != 0.
+"""
 function winner(g::BackgammonGame)
     if !g.terminated
         return nothing
     end
-    return g.reward > 0 ? Int8(0) : Int8(1)
+    if g.reward > 0
+        return Int8(0)
+    elseif g.reward < 0
+        return Int8(1)
+    else
+        # Invalid state: terminated but no reward set
+        return nothing
+    end
 end
 
 """
