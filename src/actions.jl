@@ -18,13 +18,15 @@ function action_string(action_idx::Integer)
 end
 
 # Pure function to apply a move on bitboards
+# TODO: Consolidate with apply_single_move! in game.jl to eliminate logic duplication.
+#       This function is used for legal action generation (speculative move simulation).
 @inline function apply_move_internal(p0::UInt128, p1::UInt128, cp::Integer, loc::Integer, die::Integer)
     if loc == PASS_LOC; return p0, p1; end
-    
+
     src_idx = 0
     tgt_idx = 0
     to_off = false
-    
+
     # Logic mirrors game.jl but returns new state instead of mutating
     # Determine indices
     if cp == 0
@@ -70,7 +72,10 @@ end
             p1 = incr_count(p1, tgt_idx)
         end
     end
-    
+
+    # TODO: Remove for large-scale training (set ENABLE_SANITY_CHECKS = false in game.jl)
+    sanity_check_bitboard(p0, p1)
+
     return p0, p1
 end
 

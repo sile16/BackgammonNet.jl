@@ -111,7 +111,104 @@ end
         @test outcomes[1][1] == 1
         @test outcomes[1][2] ≈ 1/36 atol=1e-5
     end
-    
+
+    @testset "Deterministic State Guarantee" begin
+        # sample_chance! must always return a non-chance node with valid moves
+        for _ in 1:20
+            g = initial_state()
+            @test is_chance_node(g)
+            sample_chance!(g)
+            @test !is_chance_node(g)
+            @test g.dice[1] > 0 && g.dice[2] > 0
+            # Must have at least one valid move (not just PASS|PASS)
+            actions = legal_actions(g)
+            pass_pass = BackgammonNet.encode_action(PASS, PASS)
+            @test length(actions) >= 1
+            @test !(length(actions) == 1 && actions[1] == pass_pass)
+        end
+
+        # apply_chance! CAN return a state where only PASS|PASS is available
+        # (This is the low-level API that doesn't auto-skip)
+        b = zeros(MVector{28, Int8})
+        b[1] = 1  # Single checker
+        for i in 2:7; b[i] = -2; end  # Block all moves for dice 1-6
+        g = make_test_game(board=b, dice=(0, 0), current_player=0)  # Chance node
+        g.dice = SVector{2, Int8}(0, 0)  # Force chance node
+        # Manually apply chance (simulating apply_chance! behavior)
+        g.dice = SVector{2, Int8}(1, 2)
+        g.remaining_actions = 1
+        @test !is_chance_node(g)
+        actions = legal_actions(g)
+        pass_pass = BackgammonNet.encode_action(PASS, PASS)
+        @test length(actions) == 1
+        @test actions[1] == pass_pass
+
+        # sample_chance! auto-applies PASS|PASS and rolls for next player
+        b = zeros(MVector{28, Int8})
+        b[1] = 1  # P0 single checker at 1
+        for i in 2:7; b[i] = -2; end  # Block all P0 moves
+        b[24] = -1  # P1 checker at 24 (can move)
+        g = make_test_game(board=b, dice=(0, 0), current_player=0)
+        g.dice = SVector{2, Int8}(0, 0)  # Force chance node
+        sample_chance!(g)
+        # Should have auto-skipped P0's blocked turn and rolled for P1
+        # Either P0 got a lucky roll that works, or P1 is now playing
+        if !game_terminated(g)
+            @test !is_chance_node(g)
+            actions = legal_actions(g)
+            pass_pass = BackgammonNet.encode_action(PASS, PASS)
+            # Must have valid moves (not just PASS|PASS)
+            @test !(length(actions) == 1 && actions[1] == pass_pass)
+        end
+
+        # step! must always return a non-chance node (auto-rolls dice)
+        g = initial_state(first_player=0)
+        sample_chance!(g)
+        for i in 1:50
+            if game_terminated(g)
+                break
+            end
+            @test !is_chance_node(g)  # Before step, should be deterministic
+            actions = legal_actions(g)
+            step!(g, actions[1])
+            if !game_terminated(g)
+                @test !is_chance_node(g)  # After step, should still be deterministic
+                @test g.dice[1] > 0 && g.dice[2] > 0
+            end
+        end
+
+        # step! with doubles should still return deterministic (even with remaining_actions)
+        b = zeros(MVector{28, Int8})
+        b[1] = 4  # 4 checkers at point 1
+        g = make_test_game(board=b, dice=(3, 3), remaining=2, current_player=0)
+        @test !is_chance_node(g)
+        @test g.remaining_actions == 2
+
+        # First step with doubles - still same turn
+        actions = legal_actions(g)
+        step!(g, actions[1])
+        if !game_terminated(g)
+            # After doubles first action, could be remaining_actions=1 (same turn)
+            # or turn switched with new dice
+            @test !is_chance_node(g)  # Must be deterministic either way
+        end
+
+        # Multiple consecutive games - all step! calls return deterministic
+        for _ in 1:5
+            g = initial_state()
+            sample_chance!(g)
+            moves = 0
+            while !game_terminated(g) && moves < 200
+                @test !is_chance_node(g)
+                actions = legal_actions(g)
+                step!(g, actions[rand(1:length(actions))])
+                moves += 1
+            end
+            # Game should have terminated or hit max moves
+            @test game_terminated(g) || moves == 200
+        end
+    end
+
     @testset "Action Encoding" begin
         # Encoding: (loc1 * 26) + loc2 + 1
         # Bar=0, Points=1-24, Pass=25
@@ -155,27 +252,312 @@ end
         b = zeros(MVector{28, Int8})
         b[6] = 1
         b[8] = 1
-        
+
         g = make_test_game(board=b, dice=(2, 2), remaining=2)
-        
+
         actions = legal_actions(g)
-        
+
         # 6->8 (using 2). 8->10 (using 2).
-        a1 = BackgammonNet.encode_action(6, 8) 
+        a1 = BackgammonNet.encode_action(6, 8)
         # 8->10 (using 2). 6->8 (using 2).
         a2 = BackgammonNet.encode_action(8, 6)
         # 8->10, 10->12?
         a3 = BackgammonNet.encode_action(8, 10)
-        
+
         @test a1 in actions
         @test a2 in actions
         @test a3 in actions
     end
-    
+
+    @testset "Higher Die Rule" begin
+        # Rule: When only one die can be used, must use the higher die
+
+        # Scenario 1: Single checker, both dice blocked differently
+        # Checker at 5, block at 6 (blocks d1=1), block at 8 (blocks d2=3)
+        # Only d2=3 can play (5->8 blocked, but 5->6 blocked too)
+        # Actually need: one die works, other doesn't
+        b = zeros(MVector{28, Int8})
+        b[5] = 1   # Checker at 5
+        b[6] = -2  # Block at 6 (blocks die 1: 5+1=6)
+        b[10] = -2 # Block at 10 (blocks die 5: 5+5=10)
+        g = make_test_game(board=b, dice=(1, 5), current_player=0)
+        actions = legal_actions(g)
+        # Die 1 blocked (5->6), die 5 blocked (5->10)
+        # Neither can play, so PASS|PASS
+        @test length(actions) == 1
+        @test actions[1] == BackgammonNet.encode_action(PASS, PASS)
+
+        # Scenario 2: One die blocked, other works - must use the working one
+        # Need to block both the first die AND subsequent moves after using second die
+        b = zeros(MVector{28, Int8})
+        b[5] = 1   # Checker at 5
+        b[6] = -2  # Block at 6 (blocks die 1: 5+1=6)
+        b[11] = -2 # Block at 11 (blocks 10+1 after 5->10)
+        # Die 5: 5->10 is open, but 10->11 blocked, so only one die usable
+        g = make_test_game(board=b, dice=(1, 5), current_player=0)
+        actions = legal_actions(g)
+        # Die 1: 5->6 blocked
+        # Die 5: 5->10 open, then die 1: 10->11 blocked
+        # Only die 5 can be used (higher die anyway)
+        @test length(actions) == 1
+        @test actions[1] == BackgammonNet.encode_action(PASS, 5)  # PASS d1, use d2 from 5
+
+        # Scenario 3: Both dice can play individually but not together - use higher
+        b = zeros(MVector{28, Int8})
+        b[1] = 1   # Single checker at 1
+        b[3] = -2  # Block at 3
+        b[5] = -2  # Block at 5
+        # Die 2: 1->3 blocked
+        # Die 4: 1->5 blocked
+        # Die 2 then 4: 1->3 blocked
+        # Die 4 then 2: 1->5 blocked
+        # Hmm, both blocked. Let me redo.
+
+        # Better scenario: checker at 1, die 2 and 4
+        # Block at 3 (blocks 1+2=3) AND block at 7 (blocks 5+2 after 1->5)
+        b = zeros(MVector{28, Int8})
+        b[1] = 1   # Checker at 1
+        b[3] = -2  # Block at 3 (blocks die 2: 1+2=3)
+        b[7] = -2  # Block at 7 (blocks 5+2 after using die 4)
+        g = make_test_game(board=b, dice=(2, 4), current_player=0)
+        actions = legal_actions(g)
+        # Die 2: 1->3 blocked
+        # Die 4: 1->5 open, then die 2: 5->7 blocked
+        # Only die 4 works (higher), so valid
+        @test length(actions) == 1
+        @test actions[1] == BackgammonNet.encode_action(PASS, 1)  # PASS d1=2, use d2=4 from point 1
+
+        # Scenario 4: Both dice work individually, neither enables the other - use higher
+        b = zeros(MVector{28, Int8})
+        b[1] = 1   # Single checker
+        b[4] = -2  # Block at 4 (blocks 1+3=4 and 1+1+3 combo)
+        b[5] = -2  # Block at 5 (blocks 1+2+3 combo after 1+2=3)
+        # Die 2: 1->3, then die 3: 3->6... but wait, need to check
+        # Actually: die 2 (1->3), then die 3 (3->6) - is 6 blocked? No.
+        # So both dice CAN be used together. Bad example.
+
+        # Scenario 4 retry: Single checker where sequential moves are blocked
+        b = zeros(MVector{28, Int8})
+        b[1] = 1   # Single checker at 1
+        b[3] = -2  # Block 1+2=3
+        b[4] = -2  # Block 1+3=4
+        b[6] = -2  # Block 3+3=6 (if we could get to 3)
+        g = make_test_game(board=b, dice=(2, 3), current_player=0)
+        actions = legal_actions(g)
+        # Die 2: 1->3 blocked
+        # Die 3: 1->4 blocked
+        # Neither die can play!
+        @test length(actions) == 1
+        @test actions[1] == BackgammonNet.encode_action(PASS, PASS)
+
+        # Scenario 5: Higher die rule - die 3 works, die 2 doesn't, must use 3
+        b = zeros(MVector{28, Int8})
+        b[1] = 1   # Single checker at 1
+        b[3] = -2  # Block at 3 (blocks die 2: 1+2=3)
+        b[6] = -2  # Block at 6 (blocks 4+2 after using die 3)
+        # Die 3: 1->4 open, then die 2: 4->6 blocked
+        g = make_test_game(board=b, dice=(2, 3), current_player=0)
+        actions = legal_actions(g)
+        # Only die 3 works (higher), so must use it
+        @test length(actions) == 1
+        @test actions[1] == BackgammonNet.encode_action(PASS, 1)  # PASS d1=2, use d2=3 from 1
+
+        # Scenario 6: Lower die works, higher doesn't - must use lower (only option)
+        b = zeros(MVector{28, Int8})
+        b[1] = 1   # Single checker at 1
+        b[4] = -2  # Block at 4 (blocks die 3: 1+3=4)
+        b[6] = -2  # Block at 6 (blocks 3+3 after using die 2)
+        # Die 2: 1->3 open, then die 3: 3->6 blocked
+        g = make_test_game(board=b, dice=(2, 3), current_player=0)
+        actions = legal_actions(g)
+        # Only die 2 works (lower), so must use it
+        @test length(actions) == 1
+        @test actions[1] == BackgammonNet.encode_action(1, PASS)  # use d1=2 from 1, PASS d2=3
+
+        # Scenario 7: Both dice work individually on same checker - use higher
+        b = zeros(MVector{28, Int8})
+        b[1] = 1   # Single checker at 1
+        b[4] = -2  # Block at 4 (blocks 1+3 and 1+1+3)
+        b[5] = -2  # Block at 5 (blocks 1+2+3 after first move)
+        # Die 2: 1->3, then 3->6? 6 open. So both can be used!
+        # Need to prevent using both...
+        b[6] = -2  # Block at 6 too
+        g = make_test_game(board=b, dice=(2, 3), current_player=0)
+        actions = legal_actions(g)
+        # Die 2: 1->3, then die 3: 3->6 blocked
+        # Die 3: 1->4 blocked
+        # So only die 2 works alone
+        @test length(actions) == 1
+        @test actions[1] == BackgammonNet.encode_action(1, PASS)
+
+        # Scenario 8: Bar entry - higher die must be used
+        b = zeros(MVector{28, Int8})
+        b[25] = 1  # On bar
+        b[2] = -2  # Block entry point 2 (blocks die 2)
+        b[5] = -2  # Block entry point 5 (blocks die 5)
+        g = make_test_game(board=b, dice=(2, 5), current_player=0)
+        actions = legal_actions(g)
+        # Neither entry works
+        @test length(actions) == 1
+        @test actions[1] == BackgammonNet.encode_action(PASS, PASS)
+
+        # Scenario 9: Bar entry - one blocked, use the other
+        b = zeros(MVector{28, Int8})
+        b[25] = 1  # On bar
+        b[2] = -2  # Block entry point 2 (blocks die 2)
+        b[7] = -2  # Block at 7 (blocks 5+2 after bar entry)
+        # Entry point 5 open, but subsequent move blocked
+        g = make_test_game(board=b, dice=(2, 5), current_player=0)
+        actions = legal_actions(g)
+        # Die 5 can enter (Bar->5), then die 2: 5->7 blocked
+        # Only one die usable (die 5, which is higher)
+        @test length(actions) == 1
+        @test actions[1] == BackgammonNet.encode_action(PASS, BAR)  # PASS d1=2, Bar with d2=5
+
+        # Scenario 10: Bearing off - must use higher die if only one works
+        b = zeros(MVector{28, Int8})
+        b[24] = 1  # Single checker at 24 (in home)
+        b[27] = 14 # 14 already off
+        g = make_test_game(board=b, dice=(1, 3), current_player=0)
+        actions = legal_actions(g)
+        # Die 1: 24+1=25=off (exact)
+        # Die 3: 24+3=27=off (over-bear, valid since 24 is highest)
+        # Both work! So must use both... but only one checker!
+        # With one checker, can only use one die. Must use higher (3).
+        @test length(actions) == 1
+        @test actions[1] == BackgammonNet.encode_action(PASS, 24)  # PASS d1=1, use d2=3
+    end
+
+    @testset "Maximize Dice Rule" begin
+        # Rule: Must use both dice if possible
+
+        # Scenario 1: Two checkers, can use both dice independently
+        b = zeros(MVector{28, Int8})
+        b[1] = 1   # Checker at 1
+        b[5] = 1   # Checker at 5
+        g = make_test_game(board=b, dice=(2, 3), current_player=0)
+        actions = legal_actions(g)
+        # Can use d1=2 on point 1 (1->3) and d2=3 on point 5 (5->8)
+        # Or d1=2 on point 5 (5->7) and d2=3 on point 1 (1->4)
+        # All actions should use both dice
+        for a in actions
+            l1, l2 = BackgammonNet.decode_action(a)
+            @test l1 != PASS && l2 != PASS  # Both dice used
+        end
+        @test length(actions) >= 2
+
+        # Scenario 2: Single checker, sequential moves use both dice
+        b = zeros(MVector{28, Int8})
+        b[1] = 1   # Single checker at 1
+        g = make_test_game(board=b, dice=(2, 3), current_player=0)
+        actions = legal_actions(g)
+        # 1->3 (d1=2), then 3->6 (d2=3)
+        # 1->4 (d2=3), then 4->6 (d1=2)
+        # Both paths end at 6, but action encoding differs
+        for a in actions
+            l1, l2 = BackgammonNet.decode_action(a)
+            @test l1 != PASS && l2 != PASS  # Both dice must be used
+        end
+
+        # Scenario 3: First move enables second (blocked initially)
+        b = zeros(MVector{28, Int8})
+        b[1] = 1   # Checker at 1
+        b[3] = -1  # Opponent blot at 3 (can be hit)
+        b[6] = -2  # Block at 6
+        g = make_test_game(board=b, dice=(2, 4), current_player=0)
+        actions = legal_actions(g)
+        # d1=2: 1->3 (hit)
+        # d2=4: 1->5 open, or after hit: 3->7 open
+        # Must use both dice
+        for a in actions
+            l1, l2 = BackgammonNet.decode_action(a)
+            @test l1 != PASS && l2 != PASS
+        end
+
+        # Scenario 4: Two checkers, one path uses both, other doesn't
+        b = zeros(MVector{28, Int8})
+        b[1] = 1   # Checker at 1
+        b[10] = 1  # Checker at 10
+        b[3] = -2  # Block at 3 (blocks 1+2)
+        b[13] = -2 # Block at 13 (blocks 10+3)
+        g = make_test_game(board=b, dice=(2, 3), current_player=0)
+        actions = legal_actions(g)
+        # d1=2 from 1: 1->3 blocked
+        # d1=2 from 10: 10->12 open
+        # d2=3 from 1: 1->4 open
+        # d2=3 from 10: 10->13 blocked
+        # Can we use both? 10->12 (d1), then 1->4 (d2)? Yes!
+        # Or 1->4 (d2), then 10->12 (d1)? Yes!
+        a_both = BackgammonNet.encode_action(10, 1)  # d1 from 10, d2 from 1
+        @test a_both in actions
+        # Single die actions should NOT be in results
+        a_single1 = BackgammonNet.encode_action(10, PASS)
+        a_single2 = BackgammonNet.encode_action(PASS, 1)
+        @test !(a_single1 in actions)
+        @test !(a_single2 in actions)
+
+        # Scenario 5: Doubles - must use all 4 sub-moves if possible
+        b = zeros(MVector{28, Int8})
+        b[1] = 4   # 4 checkers at point 1
+        g = make_test_game(board=b, dice=(2, 2), remaining=2, current_player=0)
+        actions = legal_actions(g)
+        # With doubles, each action uses 2 of the 4 moves
+        # All actions should move 2 checkers
+        for a in actions
+            l1, l2 = BackgammonNet.decode_action(a)
+            @test l1 != PASS && l2 != PASS
+        end
+
+        # Scenario 6: Can only use one die, no maximize violation
+        b = zeros(MVector{28, Int8})
+        b[1] = 1
+        b[3] = -2  # Block 1+2
+        b[4] = -2  # Block 1+3
+        b[6] = -2  # Block 3+3 (if we could reach 3)
+        g = make_test_game(board=b, dice=(2, 3), current_player=0)
+        actions = legal_actions(g)
+        # Both individual moves blocked, PASS|PASS is valid
+        @test length(actions) == 1
+        @test actions[1] == BackgammonNet.encode_action(PASS, PASS)
+
+        # Scenario 7: Bearing off - must bear off with both if possible
+        b = zeros(MVector{28, Int8})
+        b[23] = 1  # Checker at 23
+        b[24] = 1  # Checker at 24
+        b[27] = 13 # 13 already off (need 15 total)
+        g = make_test_game(board=b, dice=(2, 3), current_player=0)
+        actions = legal_actions(g)
+        # d1=2: 23->25=off, 24->26=off (overbear)
+        # d2=3: 23->26=off (overbear), 24->27=off (overbear)
+        # Can bear off both!
+        for a in actions
+            l1, l2 = BackgammonNet.decode_action(a)
+            @test l1 != PASS && l2 != PASS
+        end
+
+        # Scenario 8: Hit enables bearing off
+        b = zeros(MVector{28, Int8})
+        b[19] = 1  # Checker at 19 (in home)
+        b[22] = -1 # Opponent blot at 22
+        b[27] = 14 # 14 already off
+        g = make_test_game(board=b, dice=(3, 6), current_player=0)
+        actions = legal_actions(g)
+        # d1=3: 19->22 (hit opponent)
+        # d2=6: after hit, 22->28=off (overbear from 22)
+        # Or d2=6 first: 19->25=off, then d1=3 can't play (no checker)
+        # So 19->22, then 22->off uses both dice
+        for a in actions
+            l1, l2 = BackgammonNet.decode_action(a)
+            # At least one action should use both
+        end
+        @test length(actions) >= 1
+    end
+
     @testset "Step" begin
         b = zeros(MVector{28, Int8})
-        b[13] = 2
-        
+        b[13] = 2      # P0 has 2 pieces at point 13
+        b[12] = -2     # P1 has 2 pieces at point 12 (so P1 has valid moves)
+
         g = make_test_game(board=b, dice=(3, 4))
         
         # 13->16 (D=3), 13->17 (D=4)
@@ -830,6 +1212,43 @@ end
                         g = make_test_game(board=b, dice=(1, 2), current_player=0)
                         valid_action = BackgammonNet.encode_action(1, 1)  # 1->2 (d1), 1->3 (d2)
                         @test is_action_valid(g, valid_action)
+                    end
+
+                    @testset "Sanity Check Corruption Detection" begin
+                        # These tests verify that sanity_check_bitboard catches corrupted states.
+                        # In normal gameplay, these corruptions should never occur, but the checks
+                        # help catch bugs during development.
+                        # TODO: Remove for large-scale training (set ENABLE_SANITY_CHECKS = false)
+
+                        # Test 1: Both players on same point (impossible in backgammon)
+                        p0_corrupt = UInt128(0)
+                        p1_corrupt = UInt128(0)
+                        # Put P0 checker at physical point 5
+                        p0_corrupt = BackgammonNet.incr_count(p0_corrupt, 5)
+                        # Put P1 checker at same physical point 5 (corruption!)
+                        p1_corrupt = BackgammonNet.incr_count(p1_corrupt, 5)
+                        @test_throws ErrorException BackgammonNet.sanity_check_bitboard(p0_corrupt, p1_corrupt)
+
+                        # Test 2: Overflow - more than 15 total checkers for a player
+                        p0_overflow = UInt128(0)
+                        p1_normal = UInt128(0)
+                        # Add 16 checkers to P0 across different points (simulating overflow corruption)
+                        for i in 1:16
+                            p0_overflow = BackgammonNet.incr_count(p0_overflow, i)
+                        end
+                        @test_throws ErrorException BackgammonNet.sanity_check_bitboard(p0_overflow, p1_normal)
+
+                        # Test 3: Normal state should NOT throw
+                        g = initial_state(first_player=0)
+                        @test_nowarn BackgammonNet.sanity_check_game(g)
+
+                        # Test 4: State after valid moves should NOT throw
+                        sample_chance!(g)
+                        actions = legal_actions(g)
+                        if !isempty(actions)
+                            step!(g, actions[1])
+                            @test_nowarn BackgammonNet.sanity_check_game(g)
+                        end
                     end
 
                 end

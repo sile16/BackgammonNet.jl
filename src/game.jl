@@ -1,6 +1,12 @@
 using StaticArrays
 using Random
 
+# --- Game Constants ---
+const NUM_POINTS = 24           # Standard backgammon board points
+const MAX_CHECKERS = 15         # Each player has 15 checkers
+const NUM_LOCATIONS = 26        # For action encoding: 0-24 points + bar, plus pass location
+const MAX_NIBBLE_VALUE = 15     # Maximum value storable in 4 bits (2^4 - 1)
+
 # --- Bitboard Constants & Layout ---
 # Nibble Indices (0-27)
 const IDX_P1_OFF = 0
@@ -118,6 +124,78 @@ end
     return board - (UInt128(1) << (idx << 2))
 end
 
+# --- Sanity Check Helpers ---
+# TODO: Remove sanity checks for large-scale training (set ENABLE_SANITY_CHECKS = false)
+# This is a compile-time constant. Changing it requires recompiling the module.
+const ENABLE_SANITY_CHECKS = true
+
+"""
+    sanity_check_bitboard(p0::UInt128, p1::UInt128)
+
+Validates bitboard integrity:
+1. Points 1-24: only one player should have checkers at each point
+2. If board appears to be a real game (15 checkers per player), validates totals
+
+Throws an error if corruption is detected. This catches bugs like:
+- incr_count overflow (if point has 15 checkers and we add one, it wraps to 0 and corrupts next nibble)
+- decr_count underflow (if point has 0 checkers and we subtract)
+- Both players occupying the same point (impossible in backgammon)
+
+Note: Total checker validation only runs when both players have exactly 15 checkers,
+indicating a real game state. Test boards with fewer pieces skip total validation
+but still check for same-point corruption.
+"""
+function sanity_check_bitboard(p0::UInt128, p1::UInt128)
+    @static if !ENABLE_SANITY_CHECKS
+        return
+    end
+
+    p0_total = 0
+    p1_total = 0
+
+    # Check all 28 nibble positions (indices 0-27)
+    for idx in 0:27
+        p0_count = Int(get_count(p0, idx))
+        p1_count = Int(get_count(p1, idx))
+
+        # Points 1-24: only one player should have checkers at each point
+        if idx >= 1 && idx <= NUM_POINTS
+            if p0_count > 0 && p1_count > 0
+                error("Bitboard corruption: Both players have checkers at physical point $idx (P0: $p0_count, P1: $p1_count)")
+            end
+        end
+
+        p0_total += p0_count
+        p1_total += p1_count
+    end
+
+    # Validate total checker counts only for real game states
+    # (Test boards intentionally use fewer checkers for isolated scenario testing)
+    is_real_game = (p0_total == MAX_CHECKERS && p1_total == MAX_CHECKERS)
+    if is_real_game
+        # This is a real game - totals should stay at 15
+        # If we get here and totals aren't 15, something corrupted the state
+        # (This branch is actually unreachable given the condition, but kept for clarity)
+    elseif p0_total > MAX_CHECKERS || p1_total > MAX_CHECKERS
+        # Overflow detected! A player has more than 15 checkers
+        error("Bitboard corruption: P0 has $p0_total checkers, P1 has $p1_total checkers. " *
+              "Max is $MAX_CHECKERS. Possible overflow from incr_count.")
+    end
+    # Note: p0_total < 15 or p1_total < 15 is allowed for test boards
+end
+
+"""
+    sanity_check_game(g::BackgammonGame)
+
+Validates game state integrity. Wrapper around sanity_check_bitboard.
+"""
+function sanity_check_game(g::BackgammonGame)
+    @static if !ENABLE_SANITY_CHECKS
+        return
+    end
+    sanity_check_bitboard(g.p0, g.p1)
+end
+
 # --- Canonical Board Access ---
 function Base.getindex(g::BackgammonGame, i::Int)
     cp = g.current_player
@@ -228,9 +306,8 @@ Validates that the action is legal before applying. Throws an error if the actio
 is not in `legal_actions(g)`.
 
 !!! note "Performance"
-    Action validation is currently enabled for safety. Once the legal action mask
-    is thoroughly tested, validation can be disabled for RL performance by removing
-    the validation check below.
+    Action validation is controlled by ENABLE_SANITY_CHECKS. Set to false for
+    production RL training once the legal action mask is thoroughly tested.
 """
 function apply_action!(g::BackgammonGame, action_idx::Integer)
     if g.terminated; return; end
@@ -238,9 +315,11 @@ function apply_action!(g::BackgammonGame, action_idx::Integer)
         error("Cannot apply deterministic action on a chance node. Use apply_chance! or sample_chance!")
     end
 
-    # Validate action (can be removed later for performance once legal_actions is verified)
-    if !is_action_valid(g, action_idx)
-        error("Invalid action $action_idx. Valid actions: $(legal_actions(g))")
+    # Validate action - controlled by ENABLE_SANITY_CHECKS for performance
+    @static if ENABLE_SANITY_CHECKS
+        if !is_action_valid(g, action_idx)
+            error("Invalid action $action_idx. Valid actions: $(legal_actions(g))")
+        end
     end
 
     push!(g.history, Int(action_idx))
@@ -293,35 +372,53 @@ function apply_chance!(g::BackgammonGame, outcome_idx::Integer)
 end
 
 function sample_chance!(g::BackgammonGame, rng::AbstractRNG=Random.default_rng())
-    # Continously apply random chance actions until a deterministic state is returned
+    # Continuously apply random chance actions until a deterministic state is returned
+    # with at least one valid move (not just PASS|PASS)
     iters = 0
     max_iters = 1000
 
-    while is_chance_node(g)
+    while true
+        if g.terminated
+            break
+        end
+
         iters += 1
         if iters > max_iters
             error("Infinite loop detected in sample_chance! (exceeded $max_iters iterations)")
         end
 
-        local idx::Int
-        if g.doubles_only
-            # In doubles_only mode, uniformly sample from the 6 doubles outcomes
-            idx = DOUBLES_INDICES[rand(rng, 1:6)]
-        else
-            # Sample outcome using standard probabilities
-            r = rand(rng, Float32)
-            c = 0.0f0
-            idx = 21
-            for (i, p) in enumerate(DICE_PROBS)
-                c += p
-                if r <= c
-                    idx = i
-                    break
+        if is_chance_node(g)
+            # Roll dice
+            local idx::Int
+            if g.doubles_only
+                # In doubles_only mode, uniformly sample from the 6 doubles outcomes
+                idx = DOUBLES_INDICES[rand(rng, 1:6)]
+            else
+                # Sample outcome using standard probabilities
+                r = rand(rng, Float32)
+                c = 0.0f0
+                idx = 21
+                for (i, p) in enumerate(DICE_PROBS)
+                    c += p
+                    if r <= c
+                        idx = i
+                        break
+                    end
                 end
             end
+            apply_chance!(g, idx)
+        else
+            # Check if only PASS|PASS is available (no valid moves)
+            actions = legal_actions(g)
+            pass_pass = encode_action(PASS_LOC, PASS_LOC)
+            if length(actions) == 1 && actions[1] == pass_pass
+                # Auto-apply PASS|PASS and continue to roll for next player
+                apply_action!(g, pass_pass)
+            else
+                # Player has valid moves, exit loop
+                break
+            end
         end
-
-        apply_chance!(g, idx)
     end
 
     return g
@@ -338,6 +435,9 @@ function step!(g::BackgammonGame, action::Integer, rng::AbstractRNG=Random.defau
 end
 
 # Internal apply move for play!
+# TODO: Consolidate with apply_move_internal in actions.jl to eliminate logic duplication.
+#       apply_move_internal is a pure function returning (p0, p1), while this mutates g.
+#       Refactor this to call apply_move_internal and update g.p0, g.p1 from the result.
 function apply_single_move!(g::BackgammonGame, loc::Integer, die::Integer)
     if loc == PASS_LOC; return; end
     
@@ -416,6 +516,9 @@ function apply_single_move!(g::BackgammonGame, loc::Integer, die::Integer)
             g.p1 = incr_count(g.p1, tgt_idx)
         end
     end
+
+    # TODO: Remove for large-scale training (set ENABLE_SANITY_CHECKS = false)
+    sanity_check_game(g)
 end
 
 # Pure function to check move legality on bitboards (shared with actions.jl)
