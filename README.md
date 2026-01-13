@@ -4,7 +4,7 @@ High-performance Backgammon implementation in Julia, designed for AlphaZero.jl.
 
 ## Features
 - Optimized bitboard representation (UInt128).
-- Canonical Action Space (0-25) and Observation Space.
+- Action indices 1-676, encoding two locations (0-25 each): `action = loc1*26 + loc2 + 1`.
 - Strictly enforced Backgammon rules (forcing moves, max dice usage).
 - Two modes of operation: Deterministic Step (auto-chance) and Explicit Phase (manual-chance).
 
@@ -68,10 +68,18 @@ end
 ### Core
 - `initial_state(; first_player=nothing, short_game=false, doubles_only=false)`: Returns a new game (starts at chance node).
 - `reset!(g; first_player=nothing, short_game=false, doubles_only=false)`: Resets game to initial state without reallocating.
-- `legal_actions(g)`: Returns valid action indices.
+- `legal_actions(g)`: Returns valid action indices (1-676). Each action encodes two locations.
 - `game_terminated(g)`: Bool.
 - `winner(g)`: Returns winning player ID (0 or 1) or `nothing`.
 - `reward(g)`: Access `.reward` field for Player 0's perspective (Single: 1, Gammon: 2, Backgammon: 3).
+
+### Action Encoding
+Actions are integers 1-676, encoding two source locations for the two dice:
+- Location 0 = bar, 1-24 = board points, 25 = pass
+- `encode_action(loc1, loc2) = loc1*26 + loc2 + 1`
+- `decode_action(action)` returns `(loc1, loc2)`
+- For non-doubles: loc1 uses die1, loc2 uses die2
+- For doubles: both locations use the same die value
 
 ### Stepping
 - `step!(g, action, rng)`: High-level step. Applies action, then `sample_chance!` until deterministic.
