@@ -156,16 +156,21 @@ function legal_actions(g::BackgammonGame)
     # Track max usage during generation to avoid second pass
     max_usage = 0
 
-    # Get initial sources into buffer1, then copy to preserve while iterating
+    # Get initial sources into buffer1, copy to stack-allocated MVector
     get_legal_source_locs!(g._sources_buffer1, p0, p1, cp, d1)
-    sources1 = copy(g._sources_buffer1)  # Single allocation for iteration
+    n1 = length(g._sources_buffer1)
+    sources1 = MVector{25, Int}(undef)
+    @inbounds for i in 1:n1
+        sources1[i] = g._sources_buffer1[i]
+    end
 
     # Use buffer2 for all nested source lookups (avoids ~50 allocations)
     sub_buf = g._sources_buffer2
 
     if d1 == d2
         # Doubles
-        for s1 in sources1
+        @inbounds for i in 1:n1
+            s1 = sources1[i]
             p0_next, p1_next = apply_move_internal(p0, p1, cp, s1, d1)
             get_legal_source_locs!(sub_buf, p0_next, p1_next, cp, d1)
 
@@ -180,12 +185,17 @@ function legal_actions(g::BackgammonGame)
             end
         end
     else
-        # Non-doubles
+        # Non-doubles - get d2 sources into stack-allocated MVector
         get_legal_source_locs!(g._sources_buffer1, p0, p1, cp, d2)
-        sources2 = copy(g._sources_buffer1)  # Single allocation for iteration
+        n2 = length(g._sources_buffer1)
+        sources2 = MVector{25, Int}(undef)
+        @inbounds for i in 1:n2
+            sources2[i] = g._sources_buffer1[i]
+        end
 
         # Path A: D1 then D2
-        for s1 in sources1
+        @inbounds for i in 1:n1
+            s1 = sources1[i]
             p0_n, p1_n = apply_move_internal(p0, p1, cp, s1, d1)
             get_legal_source_locs!(sub_buf, p0_n, p1_n, cp, d2)
             if !isempty(sub_buf)
@@ -200,7 +210,8 @@ function legal_actions(g::BackgammonGame)
         end
 
         # Path B: D2 then D1
-        for s2 in sources2
+        @inbounds for i in 1:n2
+            s2 = sources2[i]
             p0_n, p1_n = apply_move_internal(p0, p1, cp, s2, d2)
             get_legal_source_locs!(sub_buf, p0_n, p1_n, cp, d1)
             if !isempty(sub_buf)
