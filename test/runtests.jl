@@ -985,13 +985,21 @@ end
         @test_nowarn apply_chance!(g8, 1)
         @test g8.dice == [1, 1]
 
-        # Test legal_actions at chance nodes respects doubles_only
+        # Test legal_actions at chance nodes returns consistent action space
         g9 = initial_state(doubles_only=true, first_player=0)
         @test is_chance_node(g9)
         chance_actions = legal_actions(g9)
-        # In doubles_only mode, only 6 valid outcomes (indices 1,7,12,16,19,21)
-        @test length(chance_actions) == 6
-        @test all(idx -> idx in (1, 7, 12, 16, 19, 21), chance_actions)
+        # Always returns all 21 indices; probabilities indicate which are valid
+        @test length(chance_actions) == 21
+        # Verify chance_outcomes has 0 probability for non-doubles
+        outcomes = chance_outcomes(g9)
+        for (idx, prob) in outcomes
+            if idx in (1, 7, 12, 16, 19, 21)
+                @test prob ≈ 1/6 atol=1e-6
+            else
+                @test prob == 0.0f0
+            end
+        end
 
         # Normal mode should still return 21 chance actions
         g10 = initial_state(first_player=0)

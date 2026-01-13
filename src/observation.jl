@@ -58,6 +58,67 @@ For non-doubles: encodes 0.25 at each die position.
 end
 
 """
+    _compute_heuristics!(obs::AbstractVector{Float32}, vals::MVector{BOARD_FEATURE_SIZE, Int8})
+
+Internal helper to compute heuristic features for full observation.
+Computes race indicator, bearing-off status, pip difference, and blot/block detection.
+
+Writes to indices IDX_RACE through IDX_PIP_DIFF (35-38) and BLOT_OFFSET/BLOCK_OFFSET ranges (39-86).
+"""
+@inline function _compute_heuristics!(obs::AbstractVector{Float32}, vals::MVector{BOARD_FEATURE_SIZE, Int8})
+    min_my = BAR_PIP_VALUE
+    max_opp = 0
+    my_pip = 0
+    opp_pip = 0
+    can_bear_my = (vals[BAR_IDX] == 0)
+    can_bear_opp = (vals[OPP_BAR_IDX] == 0)
+
+    @inbounds for i in 1:NUM_POINTS
+        val = vals[i]
+        if val > 0
+            if i < min_my; min_my = i; end
+            my_pip += val * (BAR_PIP_VALUE - i)
+            if can_bear_my && i < MY_HOME_START
+                can_bear_my = false
+            end
+        elseif val < 0
+            if i > max_opp; max_opp = i; end
+            opp_pip += (-val) * i
+            if can_bear_opp && i > OPP_HOME_END
+                can_bear_opp = false
+            end
+        end
+
+        # Blot/Block detection
+        idx_blot = BLOT_OFFSET + i
+        idx_block = BLOCK_OFFSET + i
+        if val == 1
+            obs[idx_blot] = 1.0f0
+        elseif val == -1
+            obs[idx_blot] = -1.0f0
+        end
+        if val >= 2
+            obs[idx_block] = 1.0f0
+        elseif val <= -2
+            obs[idx_block] = -1.0f0
+        end
+    end
+
+    @inbounds begin
+        my_pip += vals[BAR_IDX] * BAR_PIP_VALUE
+        opp_pip += (-vals[OPP_BAR_IDX]) * BAR_PIP_VALUE
+
+        is_race = (vals[BAR_IDX] == 0 && vals[OPP_BAR_IDX] == 0 && min_my > max_opp)
+        obs[IDX_RACE] = Float32(is_race)
+        obs[IDX_CAN_BEAR_MY] = Float32(can_bear_my)
+        obs[IDX_CAN_BEAR_OPP] = Float32(can_bear_opp)
+        obs[IDX_PIP_DIFF] = (my_pip - opp_pip) / PIP_NORM
+    end
+
+    return nothing
+end
+
+"""
     observe_fast(g::BackgammonGame) -> Vector{Float32}
 
 Generate a compact 34-element feature vector for the current game state.
@@ -128,57 +189,8 @@ function observe_full(g::BackgammonGame)
     # Dice encoding
     _encode_dice!(obs, g.dice[1], g.dice[2], g.remaining_actions)
 
-    # Heuristics - use cached vals instead of g[i]
-    min_my = BAR_PIP_VALUE
-    max_opp = 0
-    my_pip = 0
-    opp_pip = 0
-    can_bear_my = (vals[BAR_IDX] == 0)
-    can_bear_opp = (vals[OPP_BAR_IDX] == 0)
-
-    @inbounds for i in 1:NUM_POINTS
-        val = vals[i]
-        if val > 0
-            if i < min_my; min_my = i; end
-            my_pip += val * (BAR_PIP_VALUE - i)
-            # Check bearing off for my checkers (need all in home 19-24)
-            if can_bear_my && i < MY_HOME_START
-                can_bear_my = false
-            end
-        elseif val < 0
-            if i > max_opp; max_opp = i; end
-            opp_pip += (-val) * i
-            # Check bearing off for opp checkers (need all in home 1-6)
-            if can_bear_opp && i > OPP_HOME_END
-                can_bear_opp = false
-            end
-        end
-
-        # Blot/Block detection
-        idx_blot = BLOT_OFFSET + i
-        idx_block = BLOCK_OFFSET + i
-        if val == 1
-            obs[idx_blot] = 1.0f0
-        elseif val == -1
-            obs[idx_blot] = -1.0f0
-        end
-        if val >= 2
-            obs[idx_block] = 1.0f0
-        elseif val <= -2
-            obs[idx_block] = -1.0f0
-        end
-    end
-
-    @inbounds begin
-        my_pip += vals[BAR_IDX] * BAR_PIP_VALUE
-        opp_pip += (-vals[OPP_BAR_IDX]) * BAR_PIP_VALUE
-
-        is_race = (vals[BAR_IDX] == 0 && vals[OPP_BAR_IDX] == 0 && min_my > max_opp)
-        obs[IDX_RACE] = Float32(is_race)
-        obs[IDX_CAN_BEAR_MY] = Float32(can_bear_my)
-        obs[IDX_CAN_BEAR_OPP] = Float32(can_bear_opp)
-        obs[IDX_PIP_DIFF] = (my_pip - opp_pip) / PIP_NORM
-    end
+    # Heuristics (race, bearing off, pip diff, blots, blocks)
+    _compute_heuristics!(obs, vals)
 
     return obs
 end
@@ -186,7 +198,7 @@ end
 """
     observe_fast!(obs::AbstractVector{Float32}, g::BackgammonGame) -> AbstractVector{Float32}
 
-In-place version of `observe_fast`. Fills the first $(OBS_SIZE_FAST) elements of `obs`.
+In-place version of `observe_fast`. Fills the first 34 elements of `obs`.
 
 For high-throughput scenarios, pre-allocate a buffer and reuse it:
 
@@ -220,7 +232,7 @@ end
 """
     observe_full!(obs::AbstractVector{Float32}, g::BackgammonGame) -> AbstractVector{Float32}
 
-In-place version of `observe_full`. Fills the first $(OBS_SIZE_FULL) elements of `obs`.
+In-place version of `observe_full`. Fills the first 86 elements of `obs`.
 
 For high-throughput scenarios, pre-allocate a buffer and reuse it:
 
@@ -250,55 +262,8 @@ function observe_full!(obs::AbstractVector{Float32}, g::BackgammonGame)
     # Dice encoding
     _encode_dice!(obs, g.dice[1], g.dice[2], g.remaining_actions)
 
-    # Heuristics
-    min_my = BAR_PIP_VALUE
-    max_opp = 0
-    my_pip = 0
-    opp_pip = 0
-    can_bear_my = (vals[BAR_IDX] == 0)
-    can_bear_opp = (vals[OPP_BAR_IDX] == 0)
-
-    @inbounds for i in 1:NUM_POINTS
-        val = vals[i]
-        if val > 0
-            if i < min_my; min_my = i; end
-            my_pip += val * (BAR_PIP_VALUE - i)
-            if can_bear_my && i < MY_HOME_START
-                can_bear_my = false
-            end
-        elseif val < 0
-            if i > max_opp; max_opp = i; end
-            opp_pip += (-val) * i
-            if can_bear_opp && i > OPP_HOME_END
-                can_bear_opp = false
-            end
-        end
-
-        # Blot/Block detection
-        idx_blot = BLOT_OFFSET + i
-        idx_block = BLOCK_OFFSET + i
-        if val == 1
-            obs[idx_blot] = 1.0f0
-        elseif val == -1
-            obs[idx_blot] = -1.0f0
-        end
-        if val >= 2
-            obs[idx_block] = 1.0f0
-        elseif val <= -2
-            obs[idx_block] = -1.0f0
-        end
-    end
-
-    @inbounds begin
-        my_pip += vals[BAR_IDX] * BAR_PIP_VALUE
-        opp_pip += (-vals[OPP_BAR_IDX]) * BAR_PIP_VALUE
-
-        is_race = (vals[BAR_IDX] == 0 && vals[OPP_BAR_IDX] == 0 && min_my > max_opp)
-        obs[IDX_RACE] = Float32(is_race)
-        obs[IDX_CAN_BEAR_MY] = Float32(can_bear_my)
-        obs[IDX_CAN_BEAR_OPP] = Float32(can_bear_opp)
-        obs[IDX_PIP_DIFF] = (my_pip - opp_pip) / PIP_NORM
-    end
+    # Heuristics (race, bearing off, pip diff, blots, blocks)
+    _compute_heuristics!(obs, vals)
 
     return obs
 end

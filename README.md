@@ -69,7 +69,7 @@ end
 ### Core
 - `initial_state(; first_player=nothing, short_game=false, doubles_only=false)`: Returns a new game (starts at chance node).
 - `reset!(g; first_player=nothing, short_game=false, doubles_only=false)`: Resets game to initial state without reallocating.
-- `legal_actions(g)`: Returns valid action indices. At player nodes: 1-676 (encoding two locations). At chance nodes: 1-21 (dice outcomes), or in `doubles_only` mode: indices {1, 7, 12, 16, 19, 21} (the 6 doubles).
+- `legal_actions(g)`: Returns valid action indices. At player nodes: 1-676 (encoding two locations). At chance nodes: 1-21 (dice outcomes). In `doubles_only` mode, use `chance_outcomes(g)` to see which have non-zero probability.
 - `game_terminated(g)`: Bool.
 - `winner(g)`: Returns winning player ID (0 or 1) or `nothing` if not terminated.
 - `g.reward`: Player 0's reward (Single: ±1, Gammon: ±2, Backgammon: ±3). Positive if P0 wins.

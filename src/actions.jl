@@ -143,8 +143,6 @@ function get_legal_source_locs(p0::UInt128, p1::UInt128, cp::Integer, die::Integ
 end
 
 const CHANCE_ACTIONS = collect(1:21)  # Pre-allocated chance node actions
-const CHANCE_ACTIONS_DOUBLES_ONLY = copy(DOUBLES_INDICES)  # Only doubles outcomes
-
 const PASS_PASS_ACTION = [encode_action(PASS_LOC, PASS_LOC)]  # Pre-allocated for no-move case
 
 """
@@ -152,7 +150,8 @@ const PASS_PASS_ACTION = [encode_action(PASS_LOC, PASS_LOC)]  # Pre-allocated fo
 
 Returns valid action indices for the current state.
 
-At chance nodes: Returns outcome indices (1-21, or 6 doubles-only indices).
+At chance nodes: Returns outcome indices 1-21. Use `chance_outcomes(g)` to get probabilities
+(non-doubles have probability 0 in `doubles_only` mode).
 At player nodes: Returns action indices (1-676) encoding two source locations.
 
 Action encoding: `action = loc1*26 + loc2 + 1` where locations are 0-25
@@ -162,7 +161,7 @@ Note: Returns a reference to an internal buffer. Do not mutate the returned vect
 """
 function legal_actions(g::BackgammonGame)
     if is_chance_node(g)
-        return g.doubles_only ? CHANCE_ACTIONS_DOUBLES_ONLY : CHANCE_ACTIONS
+        return CHANCE_ACTIONS  # Always return all 21 indices; use chance_outcomes() for probabilities
     end
 
     d1 = Int(g.dice[1])
@@ -313,7 +312,8 @@ for membership testing.
 """
 function is_action_valid(g::BackgammonGame, action_idx::Integer)
     # Guard against chance nodes - no deterministic actions are valid
-    if g.dice[1] == 0 || g.dice[2] == 0
+    # Uses && to match is_chance_node() semantics (both dice must be 0)
+    if g.dice[1] == 0 && g.dice[2] == 0
         return false
     end
 

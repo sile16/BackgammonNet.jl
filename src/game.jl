@@ -103,10 +103,10 @@ end
 Internal helper to create pre-allocated buffers for a new game.
 
 Returns a tuple of four vectors with pre-allocated capacity:
-- `history`: Action history buffer (capacity: $(HISTORY_BUFFER_SIZE))
-- `actions_buf`: Legal actions buffer (capacity: $(ACTIONS_BUFFER_SIZE))
-- `src_buf1`: Source locations buffer 1 (capacity: $(SOURCES_BUFFER_SIZE))
-- `src_buf2`: Source locations buffer 2 (capacity: $(SOURCES_BUFFER_SIZE))
+- `history`: Action history buffer (capacity: 120)
+- `actions_buf`: Legal actions buffer (capacity: 200)
+- `src_buf1`: Source locations buffer 1 (capacity: 25)
+- `src_buf2`: Source locations buffer 2 (capacity: 25)
 
 These buffers are reused during gameplay to reduce GC pressure.
 """
