@@ -64,28 +64,31 @@ mutable struct BackgammonGame
     p1::UInt128 # Player 1 Checkers
     dice::SVector{2, Int8}
     remaining_actions::Int8
-    turn::Int8
     current_player::Int8 # 0 or 1
     terminated::Bool
     reward::Float32
     history::Vector{Int}
     doubles_only::Bool # If true, all dice rolls are doubles
-    _actions_buffer::Vector{Int}  # Pre-allocated buffer for legal_actions (reduces GC)
+    _actions_buffer::Vector{Int}    # Pre-allocated buffer for legal_actions (reduces GC)
+    _sources_buffer1::Vector{Int}   # Pre-allocated buffer for source locations
+    _sources_buffer2::Vector{Int}   # Second buffer for nested source lookups
 end
 
-function BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew)
-    buf = Int[]
-    sizehint!(buf, 200)
-    BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew, Int[], false, buf)
+function BackgammonGame(p0, p1, dice, remaining, cp, term, rew)
+    actions_buf = Int[]; sizehint!(actions_buf, 200)
+    src_buf1 = Int[]; sizehint!(src_buf1, 25)
+    src_buf2 = Int[]; sizehint!(src_buf2, 25)
+    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, Int[], false, actions_buf, src_buf1, src_buf2)
 end
 
-function BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew, history)
-    buf = Int[]
-    sizehint!(buf, 200)
-    BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew, history, false, buf)
+function BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history)
+    actions_buf = Int[]; sizehint!(actions_buf, 200)
+    src_buf1 = Int[]; sizehint!(src_buf1, 25)
+    src_buf2 = Int[]; sizehint!(src_buf2, 25)
+    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, actions_buf, src_buf1, src_buf2)
 end
 
-Base.show(io::IO, g::BackgammonGame) = print(io, "BackgammonGame(p=$(g.current_player), dice=$(g.dice), turn=$(g.turn))")
+Base.show(io::IO, g::BackgammonGame) = print(io, "BackgammonGame(p=$(g.current_player), dice=$(g.dice))")
 
 # --- Accessors ---
 
@@ -115,7 +118,6 @@ function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing
     g.p1 = p1
     g.dice = SVector{2, Int8}(0, 0)
     g.remaining_actions = 1
-    g.turn = 0
     g.current_player = cp
     g.terminated = false
     g.reward = 0.0f0
@@ -265,17 +267,24 @@ function initial_state(; first_player::Union{Nothing, Integer}=nothing,
     actions_buf = Int[]
     sizehint!(actions_buf, 200)  # Pre-allocate for legal actions
 
+    src_buf1 = Int[]
+    sizehint!(src_buf1, 25)  # Pre-allocate for source locations
+
+    src_buf2 = Int[]
+    sizehint!(src_buf2, 25)  # Pre-allocate for nested source lookups
+
     return BackgammonGame(
         p0, p1,
         SVector{2, Int8}(0, 0),
         Int8(1),
-        Int8(0),
         Int8(cp),
         false,
         0.0f0,
         history,
         doubles_only,
-        actions_buf
+        actions_buf,
+        src_buf1,
+        src_buf2
     )
 end
 
@@ -308,8 +317,7 @@ const DOUBLES_ONLY_OUTCOMES = collect(zip(1:21, DOUBLES_ONLY_PROBS))
 
 function switch_turn!(g::BackgammonGame)
     g.current_player = 1 - g.current_player
-    g.turn = 1 - g.turn
-    # We now leave dice as-is or set to 0 to indicate waiting for roll
+    # Set dice to 0 to indicate waiting for roll
     g.dice = SVector{2, Int8}(0, 0)
     g.remaining_actions = 1 # Will be updated when dice are set
 end

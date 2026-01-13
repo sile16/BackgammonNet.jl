@@ -67,11 +67,11 @@ function make_test_game(; board=nothing, dice=(1, 2), remaining=1, current_playe
     end
 
     d = SVector{2, Int8}(dice[1], dice[2])
+    # Use the short constructor which creates the buffers
     return BackgammonNet.BackgammonGame(
         p0, p1,
         d,
         Int8(remaining),
-        Int8(0),
         Int8(current_player),
         false,
         0.0f0
@@ -836,7 +836,6 @@ end
                         reset!(g)
                         @test length(g.history) == 0
                         @test is_chance_node(g)
-                        @test g.turn == 0
                     end
 
                     @testset "First Player Selection" begin
@@ -1371,6 +1370,12 @@ end
                         g = initial_state(first_player=0)
                         @test is_chance_node(g)
                         @test_throws ErrorException apply_action!(g, 1)
+
+                        # is_action_valid returns false at chance node (dice not rolled)
+                        g = initial_state(first_player=0)
+                        @test is_chance_node(g)
+                        @test !is_action_valid(g, 1)  # Any action should be invalid
+                        @test !is_action_valid(g, BackgammonNet.encode_action(PASS, PASS))  # Even PASS|PASS
 
                         # apply_chance! on non-chance node throws error
                         g = initial_state(first_player=0)

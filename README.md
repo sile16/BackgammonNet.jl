@@ -71,7 +71,7 @@ end
 - `legal_actions(g)`: Returns valid action indices (1-676). Each action encodes two locations.
 - `game_terminated(g)`: Bool.
 - `winner(g)`: Returns winning player ID (0 or 1) or `nothing`.
-- `reward(g)`: Access `.reward` field for Player 0's perspective (Single: 1, Gammon: 2, Backgammon: 3).
+- `g.reward`: Player 0's reward (Single: ±1, Gammon: ±2, Backgammon: ±3). Positive if P0 wins.
 
 ### Action Encoding
 Actions are integers 1-676, encoding two source locations for the two dice:

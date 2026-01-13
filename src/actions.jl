@@ -80,12 +80,17 @@ end
 
 # Note: is_move_legal_bits is now defined in game.jl
 
-function get_legal_source_locs(p0::UInt128, p1::UInt128, cp::Integer, die::Integer)
-    locs = Int[]
-    sizehint!(locs, 8)  # Pre-allocate for typical 4-8 legal sources
+"""
+    get_legal_source_locs!(locs::Vector{Int}, p0::UInt128, p1::UInt128, cp::Integer, die::Integer)
+
+In-place version that fills `locs` with legal source locations.
+Clears `locs` before filling. Returns `locs` for convenience.
+"""
+function get_legal_source_locs!(locs::Vector{Int}, p0::UInt128, p1::UInt128, cp::Integer, die::Integer)
+    empty!(locs)
     p_my = cp == 0 ? p0 : p1
     bar_idx = cp == 0 ? IDX_P0_BAR : IDX_P1_BAR
-    
+
     # Bar Check
     if get_count(p_my, bar_idx) > 0
         if is_move_legal_bits(p0, p1, cp, BAR_LOC, die)
@@ -93,7 +98,7 @@ function get_legal_source_locs(p0::UInt128, p1::UInt128, cp::Integer, die::Integ
         end
         return locs
     end
-    
+
     # Points Check (Canon 1..24)
     for loc in 1:24
         # Optimization: only check if checker exists
@@ -105,8 +110,15 @@ function get_legal_source_locs(p0::UInt128, p1::UInt128, cp::Integer, die::Integ
             end
         end
     end
-    
+
     return locs
+end
+
+# Allocating version for backwards compatibility and use in is_action_valid
+function get_legal_source_locs(p0::UInt128, p1::UInt128, cp::Integer, die::Integer)
+    locs = Int[]
+    sizehint!(locs, 8)
+    return get_legal_source_locs!(locs, p0, p1, cp, die)
 end
 
 const CHANCE_ACTIONS = collect(1:21)  # Pre-allocated chance node actions
@@ -144,16 +156,21 @@ function get_legal_actions(g::BackgammonGame)
     # Track max usage during generation to avoid second pass
     max_usage = 0
 
-    sources1 = get_legal_source_locs(p0, p1, cp, d1)
+    # Get initial sources into buffer1, then copy to preserve while iterating
+    get_legal_source_locs!(g._sources_buffer1, p0, p1, cp, d1)
+    sources1 = copy(g._sources_buffer1)  # Single allocation for iteration
+
+    # Use buffer2 for all nested source lookups (avoids ~50 allocations)
+    sub_buf = g._sources_buffer2
 
     if d1 == d2
         # Doubles
         for s1 in sources1
             p0_next, p1_next = apply_move_internal(p0, p1, cp, s1, d1)
-            sub_sources = get_legal_source_locs(p0_next, p1_next, cp, d1)
+            get_legal_source_locs!(sub_buf, p0_next, p1_next, cp, d1)
 
-            if !isempty(sub_sources)
-                for s2 in sub_sources
+            if !isempty(sub_buf)
+                for s2 in sub_buf
                     push!(actions, encode_action(s1, s2))
                 end
                 max_usage = 2
@@ -164,14 +181,15 @@ function get_legal_actions(g::BackgammonGame)
         end
     else
         # Non-doubles
-        sources2 = get_legal_source_locs(p0, p1, cp, d2)
+        get_legal_source_locs!(g._sources_buffer1, p0, p1, cp, d2)
+        sources2 = copy(g._sources_buffer1)  # Single allocation for iteration
 
         # Path A: D1 then D2
         for s1 in sources1
             p0_n, p1_n = apply_move_internal(p0, p1, cp, s1, d1)
-            sub2 = get_legal_source_locs(p0_n, p1_n, cp, d2)
-            if !isempty(sub2)
-                for s2 in sub2
+            get_legal_source_locs!(sub_buf, p0_n, p1_n, cp, d2)
+            if !isempty(sub_buf)
+                for s2 in sub_buf
                     push!(actions, encode_action(s1, s2))
                 end
                 max_usage = 2
@@ -184,9 +202,9 @@ function get_legal_actions(g::BackgammonGame)
         # Path B: D2 then D1
         for s2 in sources2
             p0_n, p1_n = apply_move_internal(p0, p1, cp, s2, d2)
-            sub1 = get_legal_source_locs(p0_n, p1_n, cp, d1)
-            if !isempty(sub1)
-                for s1 in sub1
+            get_legal_source_locs!(sub_buf, p0_n, p1_n, cp, d1)
+            if !isempty(sub_buf)
+                for s1 in sub_buf
                     push!(actions, encode_action(s1, s2))
                 end
                 max_usage = 2
@@ -247,15 +265,25 @@ const legal_actions = get_legal_actions
 """
     is_action_valid(g::BackgammonGame, action_idx::Integer) -> Bool
 
-Fast validation that checks if a specific action is valid without generating all legal actions.
-This is O(1) vs O(n) for `action in legal_actions(g)`.
+Validates that a specific action is legal for the current game state.
+
+Returns `false` if the game is at a chance node (dice not yet rolled).
 
 Checks:
 1. Individual moves are legal (source has pieces, target not blocked, etc.)
 2. At least one ordering of the moves works
 3. Maximize dice rule is respected (uses both dice if possible, higher die if only one)
+
+Note: Complexity is O(num_legal_sources) in the common case, up to O(num_legal_sources²)
+when validating the maximize-dice rule. Still faster than generating all legal actions
+for membership testing.
 """
 function is_action_valid(g::BackgammonGame, action_idx::Integer)
+    # Guard against chance nodes - no deterministic actions are valid
+    if g.dice[1] == 0 || g.dice[2] == 0
+        return false
+    end
+
     d1 = Int(g.dice[1])
     d2 = Int(g.dice[2])
     cp = g.current_player
