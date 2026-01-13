@@ -139,7 +139,7 @@ Action encoding: `action = loc1*26 + loc2 + 1` where locations are 0-25
 
 Note: Returns a reference to an internal buffer. Do not mutate the returned vector.
 """
-function get_legal_actions(g::BackgammonGame)
+function legal_actions(g::BackgammonGame)
     if is_chance_node(g)
         return g.doubles_only ? CHANCE_ACTIONS_DOUBLES_ONLY : CHANCE_ACTIONS
     end
@@ -263,8 +263,6 @@ function get_legal_actions(g::BackgammonGame)
     return actions
 end
 
-const legal_actions = get_legal_actions
-
 """
     is_action_valid(g::BackgammonGame, action_idx::Integer) -> Bool
 
@@ -358,8 +356,8 @@ function is_action_valid(g::BackgammonGame, action_idx::Integer)
 
     # Validate against maximize dice rule
     # NOTE: This implements the "maximize dice" and "higher die" rules.
-    # These same rules are also implemented in get_legal_actions() filtering.
-    # If you modify these rules, update get_legal_actions() as well.
+    # These same rules are also implemented in legal_actions() filtering.
+    # If you modify these rules, update legal_actions() as well.
     if can_use_both
         return true
     end
