@@ -24,17 +24,22 @@ const MASK_1_18 = reduce(|, UInt128(0xF) << (i << 2) for i in 1:18)
 # Mask for indices 7-24 (P1 must clear these before bearing off)
 const MASK_7_24 = reduce(|, UInt128(0xF) << (i << 2) for i in 7:24)
 
-# Precomputed masks for over-bear validation (checking higher points)
-# Over-bear rule: Can only bear off with a die larger than needed if NO checkers exist
-# on points HIGHER than the source point (in direction of movement).
+# Precomputed masks for over-bear validation (checking higher backgammon points)
 #
-# For P0 (moves 1→24→off): "higher" = towards 24, so check src_idx+1 to 24
-# MASKS_ABOVE_P0[i] masks indices i+1 to 24 (points higher than i for P0)
-const MASKS_ABOVE_P0 = ntuple(i -> i >= 24 ? UInt128(0) : reduce(|, UInt128(0xF) << (j << 2) for j in (i+1):24; init=UInt128(0)), 24)
+# IMPORTANT: "Higher point" in backgammon means FURTHER from bearing off, not higher physical index!
+# - P0's home board: physical 19-24, where 19 is the 6-point (furthest) and 24 is the 1-point (closest)
+# - P1's home board: physical 1-6, where 6 is the 6-point (furthest) and 1 is the 1-point (closest)
+#
+# Over-bear rule: Can only bear off with a die larger than needed if NO checkers exist
+# on points with HIGHER backgammon point numbers (i.e., further from off).
+#
+# For P0 (moves 1→24→off): higher backgammon points = LOWER physical indices (19 to src_idx-1)
+# MASKS_HIGHER_P0[i] masks indices 19 to i-1 (points further from off than i)
+const MASKS_HIGHER_P0 = ntuple(i -> i <= 19 ? UInt128(0) : reduce(|, UInt128(0xF) << (j << 2) for j in 19:(i-1); init=UInt128(0)), 24)
 
-# For P1 (moves 24→1→off): "higher" in P1's direction = towards 1, so check 1 to src_idx-1
-# MASKS_BELOW_P1[i] masks indices 1 to i-1 (points "higher" than i for P1's direction)
-const MASKS_BELOW_P1 = ntuple(i -> i <= 1 ? UInt128(0) : reduce(|, UInt128(0xF) << (j << 2) for j in 1:(i-1); init=UInt128(0)), 6)
+# For P1 (moves 24→1→off): higher backgammon points = HIGHER physical indices (src_idx+1 to 6)
+# MASKS_HIGHER_P1[i] masks indices i+1 to 6 (points further from off than i)
+const MASKS_HIGHER_P1 = ntuple(i -> i >= 6 ? UInt128(0) : reduce(|, UInt128(0xF) << (j << 2) for j in (i+1):6; init=UInt128(0)), 6)
 
 # Helper to check if any checkers exist in masked region
 @inline has_checkers(board::UInt128, mask::UInt128) = (board & mask) != 0
@@ -575,17 +580,18 @@ function is_move_legal_bits(p0::UInt128, p1::UInt128, cp::Integer, loc::Integer,
             if has_checkers(p_my, MASK_1_18); return false; end
 
             if tgt_idx == 25; return true; end
-            # Over-bear: Can only over-bear if no checkers on HIGHER points (src_idx+1 to 24)
-            if src_idx <= 23 && has_checkers(p_my, MASKS_ABOVE_P0[src_idx]); return false; end
+            # Over-bear: Can only over-bear from the HIGHEST backgammon point (furthest from off).
+            # For P0, higher backgammon points = lower physical indices (19 to src_idx-1).
+            if src_idx >= 20 && has_checkers(p_my, MASKS_HIGHER_P0[src_idx]); return false; end
             return true
         else
             if get_count(p_my, IDX_P1_BAR) > 0; return false; end
             if has_checkers(p_my, MASK_7_24); return false; end
 
             if tgt_idx == 0; return true; end
-            # Over-bear: Can only over-bear if no checkers on LOWER points (1 to src_idx-1)
-            # (P1 moves towards lower indices, so "higher" in their direction means lower physical index)
-            if src_idx >= 2 && has_checkers(p_my, MASKS_BELOW_P1[src_idx]); return false; end
+            # Over-bear: Can only over-bear from the HIGHEST backgammon point (furthest from off).
+            # For P1, higher backgammon points = higher physical indices (src_idx+1 to 6).
+            if src_idx <= 5 && has_checkers(p_my, MASKS_HIGHER_P1[src_idx]); return false; end
             return true
         end
     end

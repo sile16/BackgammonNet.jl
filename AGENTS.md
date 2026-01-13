@@ -38,6 +38,39 @@ Bit manipulation uses nibble operations: `get_count`, `incr_count`, `decr_count`
 - `g[i]` accessor returns canonical view: positive = current player's checkers, negative = opponent's
 - P1's canonical index `i` maps to physical index `25-i`
 
+### IMPORTANT: Backgammon Point Numbers vs Physical Indices
+This is a common source of confusion. Standard backgammon uses point numbers 1-6 for the home board, where:
+- **6-point** = furthest from bearing off (highest point number)
+- **1-point** = closest to bearing off (lowest point number)
+
+The mapping to physical indices is **inverted** for P0:
+
+| P0 Physical Index | Backgammon Point | Distance to Off |
+|-------------------|------------------|-----------------|
+| 19                | 6-point          | 6               |
+| 20                | 5-point          | 5               |
+| 21                | 4-point          | 4               |
+| 22                | 3-point          | 3               |
+| 23                | 2-point          | 2               |
+| 24                | 1-point          | 1               |
+
+For P1 (home board physical 1-6):
+
+| P1 Physical Index | Backgammon Point | Distance to Off |
+|-------------------|------------------|-----------------|
+| 6                 | 6-point          | 6               |
+| 5                 | 5-point          | 5               |
+| 4                 | 4-point          | 4               |
+| 3                 | 3-point          | 3               |
+| 2                 | 2-point          | 2               |
+| 1                 | 1-point          | 1               |
+
+**Over-Bear Rule:** When bearing off with a die larger than needed, you can ONLY over-bear from the HIGHEST occupied point (furthest from off). This means:
+- P0: Check for checkers at LOWER physical indices (19 to src-1) before allowing over-bear
+- P1: Check for checkers at HIGHER physical indices (src+1 to 6) before allowing over-bear
+
+"Higher" in backgammon = further from off = LOWER physical index for P0, HIGHER physical index for P1.
+
 ### Action Encoding
 Actions are encoded as `(loc1 * 26) + loc2 + 1` where:
 - `loc1`: source for die 1 (0=bar, 1-24=points, 25=pass)
