@@ -172,7 +172,7 @@ end
         @test a3 in actions
     end
     
-    @testset "Play" begin
+    @testset "Step" begin
         b = zeros(MVector{28, Int8})
         b[13] = 2
         
@@ -181,7 +181,7 @@ end
         # 13->16 (D=3), 13->17 (D=4)
         # Action (13, 13)
         act = BackgammonNet.encode_action(13, 13)
-        BackgammonNet.play!(g, act)
+        BackgammonNet.step!(g, act)
         
         # Turn switched.
         # Original moves: 13->16, 13->17.
@@ -283,7 +283,7 @@ end
             # 24->Off (1). Pass (2).
             act = BackgammonNet.encode_action(24, PASS) 
             
-            BackgammonNet.play!(g, act)
+            BackgammonNet.step!(g, act)
             
             @test g[27] == 15
             @test g.terminated == true
@@ -300,7 +300,7 @@ end
             # 1->2 (Hit) using D1. Pass D2.
             act = BackgammonNet.encode_action(1, PASS) 
             
-            BackgammonNet.play!(g, act)
+            BackgammonNet.step!(g, act)
             
             # g[25] is Current Player Bar.
             # Opponent was hit. Opponent is now Current Player.

@@ -118,7 +118,7 @@ end
     return board - (UInt128(1) << (idx << 2))
 end
 
-# --- Legacy/Test Support: Canonical Board Access ---
+# --- Canonical Board Access ---
 function Base.getindex(g::BackgammonGame, i::Int)
     cp = g.current_player
     p_my = cp == 0 ? g.p0 : g.p1
@@ -408,10 +408,6 @@ function apply_single_move!(g::BackgammonGame, loc::Integer, die::Integer)
             g.p1 = incr_count(g.p1, tgt_idx)
         end
     end
-end
-
-function play!(g::BackgammonGame, action_idx::Integer)
-    step!(g, action_idx)
 end
 
 # Pure function to check move legality on bitboards (shared with actions.jl)
