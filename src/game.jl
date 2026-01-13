@@ -519,6 +519,11 @@ function apply_action!(g::BackgammonGame, action_idx::Integer)
             g.terminated, g.reward = terminated_bak, reward_bak
             if is_move_legal(g, loc2, d2)
                 apply_single_move!(g, loc2, d2)
+                if !is_move_legal(g, loc1, d1)
+                    g.p0, g.p1 = p0_bak, p1_bak
+                    g.terminated, g.reward = terminated_bak, reward_bak
+                    error("Invalid action $action_idx: neither move ordering is legal")
+                end
                 apply_single_move!(g, loc1, d1)
             else
                 # Neither move ordering is legal - this is an invalid action.

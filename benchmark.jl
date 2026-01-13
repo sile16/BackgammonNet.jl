@@ -18,11 +18,11 @@ function run_benchmark(duration_seconds=30.0)
     wins_2pt = 0
     wins_3pt = 0
 
-    # Pre-allocate RNG to avoid thread/allocation overhead if possible,
-    # though Random.default_rng() is usually fine.
+    # Pre-allocate game object outside loop to reuse buffers (more realistic for training)
+    g = initial_state()
 
     while time() < end_time
-        g = initial_state()
+        reset!(g)  # Reuse buffers instead of allocating new game
         sample_chance!(g) # Roll initial dice
 
         last_player = current_player(g)

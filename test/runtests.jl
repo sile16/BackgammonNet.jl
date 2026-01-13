@@ -1549,6 +1549,22 @@ end
         @test !is_action_valid(g, invalid_action)
         @test_throws ErrorException apply_action!(g, invalid_action)
 
+        # Invalid action: shared source with single checker (state corruption regression test)
+        # This tests the bug fix where loc1 was applied without checking legality after loc2
+        # Scenario: single checker at 6, dice (1,2), action (6,6)
+        # - loc1=6 with d1=1: 6->7 is legal initially
+        # - After 6->7, loc2=6 with d2=2 is NOT legal (no checker)
+        # - After restore, loc2=6 with d2=2 IS legal (6->8)
+        # - After 6->8, loc1=6 with d1=1 is NOT legal (no checker) - must check!
+        b = zeros(MVector{28, Int8})
+        b[6] = 1  # Single checker at point 6
+        g = make_test_game(board=b, dice=(1, 2), current_player=0)
+        invalid_action = BackgammonNet.encode_action(6, 6)  # Try to use same source twice
+        @test !is_action_valid(g, invalid_action)
+        @test_throws ErrorException apply_action!(g, invalid_action)
+        # Verify no state corruption occurred (checker should still be at 6)
+        @test g[6] == 1
+
         # winner() edge cases
         # Non-terminated game returns nothing
         g = initial_state(first_player=0)
