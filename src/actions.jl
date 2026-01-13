@@ -4,17 +4,58 @@
 # Typically only a few locations are valid sources per die (checkers spread across 2-8 points).
 const SOURCES_HINT_SIZE = 8
 
+"""
+    encode_action(loc1::Integer, loc2::Integer) -> Int
+
+Encode two source locations into a single action index (1-676).
+
+# Location Values
+- 0: Bar (BAR_LOC)
+- 1-24: Board points
+- 25: Pass (PASS_LOC)
+
+# Formula
+`action = loc1 * 26 + loc2 + 1`
+
+See also: `decode_action`, `action_string`
+"""
 function encode_action(loc1::Integer, loc2::Integer)
     return Int((loc1 * 26) + loc2 + 1)
 end
 
+"""
+    decode_action(action_idx::Integer) -> (Int, Int)
+
+Decode an action index (1-676) into two source locations.
+
+Returns `(loc1, loc2)` where each location is 0-25:
+- 0: Bar (BAR_LOC)
+- 1-24: Board points
+- 25: Pass (PASS_LOC)
+
+See also: `encode_action`, `action_string`
+"""
 function decode_action(action_idx::Integer)
-    idx0 = Int(action_idx - 1)
-    loc1 = div(idx0, 26)
-    loc2 = idx0 % 26
+    idx0::Int = Int(action_idx - 1)
+    loc1::Int = div(idx0, 26)
+    loc2::Int = idx0 % 26
     return loc1, loc2
 end
 
+"""
+    action_string(action_idx::Integer) -> String
+
+Convert an action index to a human-readable string.
+
+# Examples
+```julia
+action_string(encode_action(1, 2))      # "1 | 2"
+action_string(encode_action(BAR_LOC, 5)) # "Bar | 5"
+action_string(encode_action(PASS_LOC, PASS_LOC)) # "Pass | Pass"
+```
+
+See also: `encode_action`, `decode_action`
+"""
 function action_string(action_idx::Integer)
     l1, l2 = decode_action(action_idx)
     l_str(l) = l == PASS_LOC ? "Pass" : (l == BAR_LOC ? "Bar" : string(l))
@@ -43,9 +84,9 @@ Handles hitting (sending opponent checker to bar) automatically.
 @inline function apply_move_internal(p0::UInt128, p1::UInt128, cp::Integer, loc::Integer, die::Integer)
     if loc == PASS_LOC; return p0, p1; end
 
-    src_idx = 0
-    tgt_idx = 0
-    to_off = false
+    src_idx::Int = 0
+    tgt_idx::Int = 0
+    to_off::Bool = false
 
     # Logic mirrors game.jl but returns new state instead of mutating
     # Determine indices
@@ -98,8 +139,6 @@ Handles hitting (sending opponent checker to bar) automatically.
 
     return p0, p1
 end
-
-# Note: is_move_legal_bits is now defined in game.jl
 
 """
     get_legal_source_locs!(locs::Vector{Int}, p0::UInt128, p1::UInt128, cp::Integer, die::Integer)

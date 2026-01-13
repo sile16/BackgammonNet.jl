@@ -2075,5 +2075,64 @@ end
         @test obs8[38] ≈ 24.0f0 / 375.0f0 atol=1e-5
     end
 
+    @testset "Precomputed Bearing-Off Masks" begin
+        # Test MASK_1_18: P0 must clear indices 1-18 before bearing off
+        # MASK_1_18 should have bits set for nibbles 1-18
+        for idx in 1:18
+            @test BackgammonNet.has_checkers(UInt128(1) << (idx << 2), BackgammonNet.MASK_1_18)
+        end
+        # Indices 19-24 should NOT be in MASK_1_18
+        for idx in 19:24
+            @test !BackgammonNet.has_checkers(UInt128(1) << (idx << 2), BackgammonNet.MASK_1_18)
+        end
+        # Special indices (0, 25, 26, 27) should NOT be in MASK_1_18
+        for idx in [0, 25, 26, 27]
+            @test !BackgammonNet.has_checkers(UInt128(1) << (idx << 2), BackgammonNet.MASK_1_18)
+        end
+
+        # Test MASK_7_24: P1 must clear indices 7-24 before bearing off
+        for idx in 7:24
+            @test BackgammonNet.has_checkers(UInt128(1) << (idx << 2), BackgammonNet.MASK_7_24)
+        end
+        # Indices 1-6 should NOT be in MASK_7_24
+        for idx in 1:6
+            @test !BackgammonNet.has_checkers(UInt128(1) << (idx << 2), BackgammonNet.MASK_7_24)
+        end
+
+        # Test MASKS_HIGHER_P0: For P0, higher backgammon points = lower physical indices
+        # MASKS_HIGHER_P0[i] masks indices 19 to i-1 (points further from off than i)
+        @testset "MASKS_HIGHER_P0" begin
+            # Index 19 has no higher points (it's the 6-point, furthest from off)
+            @test BackgammonNet.MASKS_HIGHER_P0[19] == UInt128(0)
+
+            # Index 20: should mask 19 only
+            @test BackgammonNet.has_checkers(UInt128(1) << (19 << 2), BackgammonNet.MASKS_HIGHER_P0[20])
+            @test !BackgammonNet.has_checkers(UInt128(1) << (20 << 2), BackgammonNet.MASKS_HIGHER_P0[20])
+
+            # Index 24: should mask 19-23
+            for idx in 19:23
+                @test BackgammonNet.has_checkers(UInt128(1) << (idx << 2), BackgammonNet.MASKS_HIGHER_P0[24])
+            end
+            @test !BackgammonNet.has_checkers(UInt128(1) << (24 << 2), BackgammonNet.MASKS_HIGHER_P0[24])
+        end
+
+        # Test MASKS_HIGHER_P1: For P1, higher backgammon points = higher physical indices
+        # MASKS_HIGHER_P1[i] masks indices i+1 to 6 (points further from off than i)
+        @testset "MASKS_HIGHER_P1" begin
+            # Index 6 has no higher points (it's the 6-point, furthest from off)
+            @test BackgammonNet.MASKS_HIGHER_P1[6] == UInt128(0)
+
+            # Index 5: should mask 6 only
+            @test BackgammonNet.has_checkers(UInt128(1) << (6 << 2), BackgammonNet.MASKS_HIGHER_P1[5])
+            @test !BackgammonNet.has_checkers(UInt128(1) << (5 << 2), BackgammonNet.MASKS_HIGHER_P1[5])
+
+            # Index 1: should mask 2-6
+            for idx in 2:6
+                @test BackgammonNet.has_checkers(UInt128(1) << (idx << 2), BackgammonNet.MASKS_HIGHER_P1[1])
+            end
+            @test !BackgammonNet.has_checkers(UInt128(1) << (1 << 2), BackgammonNet.MASKS_HIGHER_P1[1])
+        end
+    end
+
 end
 
