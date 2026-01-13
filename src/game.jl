@@ -467,15 +467,11 @@ function apply_action!(g::BackgammonGame, action_idx::Integer)
                 apply_single_move!(g, loc2, d2)
                 apply_single_move!(g, loc1, d1)
             else
-                # WARNING: This branch is only reached when ENABLE_SANITY_CHECKS=false
-                # and an invalid action is passed. Neither move ordering is legal.
-                # We apply moves anyway as a defensive fallback, but this WILL corrupt
-                # the game state (potential nibble overflow/underflow).
-                #
-                # In production, ensure your policy only selects from legal_actions()
-                # or use is_action_valid() to validate before calling apply_action!.
-                apply_single_move!(g, loc1, d1)
-                apply_single_move!(g, loc2, d2)
+                # Neither move ordering is legal - this is an invalid action.
+                # Always throw an error to prevent state corruption, even when
+                # ENABLE_SANITY_CHECKS=false. The sanity check flag controls
+                # upfront validation overhead, not corruption protection.
+                error("Invalid action $action_idx: neither move ordering is legal")
             end
         end
     else
