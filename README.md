@@ -4,7 +4,8 @@ High-performance Backgammon implementation in Julia, designed for AlphaZero.jl.
 
 ## Features
 - Optimized bitboard representation (UInt128).
-- Action indices 1-676, encoding two locations (0-25 each): `action = loc1*26 + loc2 + 1`.
+- Player action indices 1-676, encoding two locations (0-25 each): `action = loc1*26 + loc2 + 1`.
+- Chance action indices 1-21 for dice outcomes (or 1-6 in doubles-only mode).
 - Strictly enforced Backgammon rules (forcing moves, max dice usage).
 - Two modes of operation: Deterministic Step (auto-chance) and Explicit Phase (manual-chance).
 
@@ -68,13 +69,13 @@ end
 ### Core
 - `initial_state(; first_player=nothing, short_game=false, doubles_only=false)`: Returns a new game (starts at chance node).
 - `reset!(g; first_player=nothing, short_game=false, doubles_only=false)`: Resets game to initial state without reallocating.
-- `legal_actions(g)`: Returns valid action indices (1-676). Each action encodes two locations.
+- `legal_actions(g)`: Returns valid action indices. At player nodes: 1-676 (encoding two locations). At chance nodes: 1-21 (dice outcomes) or 1-6 in `doubles_only` mode.
 - `game_terminated(g)`: Bool.
-- `winner(g)`: Returns winning player ID (0 or 1) or `nothing`.
+- `winner(g)`: Returns winning player ID (0 or 1) or `nothing` if not terminated.
 - `g.reward`: Player 0's reward (Single: ±1, Gammon: ±2, Backgammon: ±3). Positive if P0 wins.
 
-### Action Encoding
-Actions are integers 1-676, encoding two source locations for the two dice:
+### Action Encoding (Player Nodes)
+Player actions are integers 1-676, encoding two source locations for the two dice:
 - Location 0 = bar, 1-24 = board points, 25 = pass
 - `encode_action(loc1, loc2) = loc1*26 + loc2 + 1`
 - `decode_action(action)` returns `(loc1, loc2)`
