@@ -17,9 +17,8 @@ function action_string(action_idx::Integer)
     return "$(l_str(l1)) | $(l_str(l2))"
 end
 
-# Pure function to apply a move on bitboards
-# TODO: Consolidate with apply_single_move! in game.jl to eliminate logic duplication.
-#       This function is used for legal action generation (speculative move simulation).
+# Pure function to apply a move on bitboards.
+# Used by both legal action generation AND apply_single_move! in game.jl.
 @inline function apply_move_internal(p0::UInt128, p1::UInt128, cp::Integer, loc::Integer, die::Integer)
     if loc == PASS_LOC; return p0, p1; end
 

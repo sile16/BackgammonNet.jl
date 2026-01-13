@@ -464,90 +464,49 @@ function step!(g::BackgammonGame, action::Integer, rng::AbstractRNG=Random.defau
 end
 
 # Internal apply move for play!
-# TODO: Consolidate with apply_move_internal in actions.jl to eliminate logic duplication.
-#       apply_move_internal is a pure function returning (p0, p1), while this mutates g.
-#       Refactor this to call apply_move_internal and update g.p0, g.p1 from the result.
+# Uses apply_move_internal from actions.jl for move logic, then handles termination.
 function apply_single_move!(g::BackgammonGame, loc::Integer, die::Integer)
     if loc == PASS_LOC; return; end
-    
+
+    # Delegate move logic to apply_move_internal (shared with legal action generation)
+    # Note: apply_move_internal already calls sanity_check_bitboard
+    g.p0, g.p1 = apply_move_internal(g.p0, g.p1, g.current_player, loc, die)
+
+    # Check for game termination (15 pieces borne off)
     cp = g.current_player
-    
-    src_idx = 0
-    tgt_idx = 0
-    to_off = false
-    
     if cp == 0
-        src_idx = (loc == BAR_LOC) ? IDX_P0_BAR : loc
-        if loc == BAR_LOC
-            tgt_idx = Int(die)
-        else
-            tgt_idx = src_idx + Int(die)
-            if tgt_idx > 24; tgt_idx = IDX_P0_OFF; to_off = true; end
-        end
-        
-        g.p0 = decr_count(g.p0, src_idx)
-        if to_off
-            g.p0 = incr_count(g.p0, IDX_P0_OFF)
-            if get_count(g.p0, IDX_P0_OFF) == 15
-                g.terminated = true
-                multiplier = 1.0f0
-                if get_count(g.p1, IDX_P1_OFF) == 0
-                    multiplier = 2.0f0 # Gammon
-                    if get_count(g.p1, IDX_P1_BAR) > 0
-                        multiplier = 3.0f0
-                    else
-                        for i in 19:24
-                            if get_count(g.p1, i) > 0; multiplier = 3.0f0; break; end
-                        end
+        if get_count(g.p0, IDX_P0_OFF) == 15
+            g.terminated = true
+            multiplier = 1.0f0
+            if get_count(g.p1, IDX_P1_OFF) == 0
+                multiplier = 2.0f0 # Gammon
+                if get_count(g.p1, IDX_P1_BAR) > 0
+                    multiplier = 3.0f0 # Backgammon (on bar)
+                else
+                    for i in 19:24
+                        if get_count(g.p1, i) > 0; multiplier = 3.0f0; break; end # Backgammon (in home)
                     end
                 end
-                g.reward = multiplier
             end
-        else
-            if get_count(g.p1, tgt_idx) == 1
-                g.p1 = decr_count(g.p1, tgt_idx)
-                g.p1 = incr_count(g.p1, IDX_P1_BAR)
-            end
-            g.p0 = incr_count(g.p0, tgt_idx)
+            g.reward = multiplier
         end
     else
-        src_idx = (loc == BAR_LOC) ? IDX_P1_BAR : (25 - loc)
-        if loc == BAR_LOC
-            tgt_idx = 25 - Int(die)
-        else
-            tgt_idx = src_idx - Int(die)
-            if tgt_idx < 1; tgt_idx = IDX_P1_OFF; to_off = true; end
-        end
-        
-        g.p1 = decr_count(g.p1, src_idx)
-        if to_off
-            g.p1 = incr_count(g.p1, IDX_P1_OFF)
-            if get_count(g.p1, IDX_P1_OFF) == 15
-                g.terminated = true
-                multiplier = 1.0f0
-                if get_count(g.p0, IDX_P0_OFF) == 0
-                    multiplier = 2.0f0 # Gammon
-                    if get_count(g.p0, IDX_P0_BAR) > 0
-                        multiplier = 3.0f0
-                    else
-                        for i in 1:6
-                            if get_count(g.p0, i) > 0; multiplier = 3.0f0; break; end
-                        end
+        if get_count(g.p1, IDX_P1_OFF) == 15
+            g.terminated = true
+            multiplier = 1.0f0
+            if get_count(g.p0, IDX_P0_OFF) == 0
+                multiplier = 2.0f0 # Gammon
+                if get_count(g.p0, IDX_P0_BAR) > 0
+                    multiplier = 3.0f0 # Backgammon (on bar)
+                else
+                    for i in 1:6
+                        if get_count(g.p0, i) > 0; multiplier = 3.0f0; break; end # Backgammon (in home)
                     end
                 end
-                g.reward = -multiplier
             end
-        else
-            if get_count(g.p0, tgt_idx) == 1
-                g.p0 = decr_count(g.p0, tgt_idx)
-                g.p0 = incr_count(g.p0, IDX_P0_BAR)
-            end
-            g.p1 = incr_count(g.p1, tgt_idx)
+            g.reward = -multiplier
         end
     end
-
-    # TODO: Remove for large-scale training (set ENABLE_SANITY_CHECKS = false)
-    sanity_check_game(g)
 end
 
 # Pure function to check move legality on bitboards (shared with actions.jl)
