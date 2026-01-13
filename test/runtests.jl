@@ -1637,11 +1637,62 @@ end
     end
 
     @testset "action_string Function" begin
-        # Test basic encoding
+        # Test basic point-to-point moves
         @test BackgammonNet.action_string(BackgammonNet.encode_action(1, 2)) == "1 | 2"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(12, 13)) == "12 | 13"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(24, 24)) == "24 | 24"
+
+        # Test all special locations
         @test BackgammonNet.action_string(BackgammonNet.encode_action(PASS, PASS)) == "Pass | Pass"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(BAR, BAR)) == "Bar | Bar"
+
+        # Test bar entry combinations
         @test BackgammonNet.action_string(BackgammonNet.encode_action(BAR, 5)) == "Bar | 5"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(BAR, PASS)) == "Bar | Pass"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(5, BAR)) == "5 | Bar"
+
+        # Test pass combinations
         @test BackgammonNet.action_string(BackgammonNet.encode_action(10, PASS)) == "10 | Pass"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(PASS, 10)) == "Pass | 10"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(PASS, BAR)) == "Pass | Bar"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(BAR, PASS)) == "Bar | Pass"
+
+        # Test boundary points
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(1, 1)) == "1 | 1"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(24, 1)) == "24 | 1"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(1, 24)) == "1 | 24"
+
+        # Test encode/decode/string roundtrip
+        for loc1 in [BAR, 1, 12, 24, PASS]
+            for loc2 in [BAR, 1, 12, 24, PASS]
+                action = BackgammonNet.encode_action(loc1, loc2)
+                decoded_loc1, decoded_loc2 = BackgammonNet.decode_action(action)
+                @test decoded_loc1 == loc1
+                @test decoded_loc2 == loc2
+
+                # Verify string contains expected parts
+                str = BackgammonNet.action_string(action)
+                @test occursin("|", str)
+                if loc1 == PASS
+                    @test occursin("Pass", str)
+                elseif loc1 == BAR
+                    @test occursin("Bar", str)
+                else
+                    @test occursin(string(loc1), str)
+                end
+            end
+        end
+
+        # Test action index boundaries
+        @test BackgammonNet.encode_action(BAR, BAR) == 1  # Minimum action
+        @test BackgammonNet.encode_action(PASS, PASS) == 676  # Maximum action
+
+        # Verify all valid action indices produce valid strings
+        for action in 1:676
+            str = BackgammonNet.action_string(action)
+            @test !isempty(str)
+            @test occursin("|", str)
+        end
     end
 
     @testset "History Tracking" begin
