@@ -4,8 +4,6 @@ using Random
 # --- Game Constants ---
 const NUM_POINTS = 24           # Standard backgammon board points
 const MAX_CHECKERS = 15         # Each player has 15 checkers
-const NUM_LOCATIONS = 26        # For action encoding: 0-24 points + bar, plus pass location
-const MAX_NIBBLE_VALUE = 15     # Maximum value storable in 4 bits (2^4 - 1)
 
 # --- Bitboard Constants & Layout ---
 # Nibble Indices (0-27)
@@ -27,10 +25,16 @@ const MASK_1_18 = reduce(|, UInt128(0xF) << (i << 2) for i in 1:18)
 const MASK_7_24 = reduce(|, UInt128(0xF) << (i << 2) for i in 7:24)
 
 # Precomputed masks for over-bear validation (checking higher points)
-# For P0: indices 19-24 are home board
-const MASKS_19_TO = ntuple(i -> i < 19 ? UInt128(0) : reduce(|, UInt128(0xF) << (j << 2) for j in 19:(i-1); init=UInt128(0)), 25)
-# For P1: indices 1-6 are home board
-const MASKS_TO_6 = ntuple(i -> i > 6 ? UInt128(0) : reduce(|, UInt128(0xF) << (j << 2) for j in (i+1):6; init=UInt128(0)), 6)
+# Over-bear rule: Can only bear off with a die larger than needed if NO checkers exist
+# on points HIGHER than the source point (in direction of movement).
+#
+# For P0 (moves 1→24→off): "higher" = towards 24, so check src_idx+1 to 24
+# MASKS_ABOVE_P0[i] masks indices i+1 to 24 (points higher than i for P0)
+const MASKS_ABOVE_P0 = ntuple(i -> i >= 24 ? UInt128(0) : reduce(|, UInt128(0xF) << (j << 2) for j in (i+1):24; init=UInt128(0)), 24)
+
+# For P1 (moves 24→1→off): "higher" in P1's direction = towards 1, so check 1 to src_idx-1
+# MASKS_BELOW_P1[i] masks indices 1 to i-1 (points "higher" than i for P1's direction)
+const MASKS_BELOW_P1 = ntuple(i -> i <= 1 ? UInt128(0) : reduce(|, UInt128(0xF) << (j << 2) for j in 1:(i-1); init=UInt128(0)), 6)
 
 # Helper to check if any checkers exist in masked region
 @inline has_checkers(board::UInt128, mask::UInt128) = (board & mask) != 0
@@ -308,7 +312,8 @@ end
 # --- Chance / Stochastic Interface ---
 
 function is_chance_node(g::BackgammonGame)
-    return g.dice[1] == 0 && !g.terminated
+    # Check both dice for robustness against state corruption
+    return g.dice[1] == 0 && g.dice[2] == 0 && !g.terminated
 end
 
 # Precomputed standard chance outcomes (avoids allocation on each call)
@@ -375,9 +380,13 @@ function apply_action!(g::BackgammonGame, action_idx::Integer)
                 apply_single_move!(g, loc2, d2)
                 apply_single_move!(g, loc1, d1)
             else
-                # This branch should only be reached with invalid actions
-                # when ENABLE_SANITY_CHECKS=false. Apply in original order
-                # since neither ordering works (defensive fallback).
+                # WARNING: This branch is only reached when ENABLE_SANITY_CHECKS=false
+                # and an invalid action is passed. Neither move ordering is legal.
+                # We apply moves anyway as a defensive fallback, but this WILL corrupt
+                # the game state (potential nibble overflow/underflow).
+                #
+                # In production, ensure your policy only selects from legal_actions()
+                # or use is_action_valid() to validate before calling apply_action!.
                 apply_single_move!(g, loc1, d1)
                 apply_single_move!(g, loc2, d2)
             end
@@ -566,16 +575,17 @@ function is_move_legal_bits(p0::UInt128, p1::UInt128, cp::Integer, loc::Integer,
             if has_checkers(p_my, MASK_1_18); return false; end
 
             if tgt_idx == 25; return true; end
-            # Over-bear: Check 19..src_idx-1 using precomputed mask
-            if src_idx >= 20 && has_checkers(p_my, MASKS_19_TO[src_idx]); return false; end
+            # Over-bear: Can only over-bear if no checkers on HIGHER points (src_idx+1 to 24)
+            if src_idx <= 23 && has_checkers(p_my, MASKS_ABOVE_P0[src_idx]); return false; end
             return true
         else
             if get_count(p_my, IDX_P1_BAR) > 0; return false; end
             if has_checkers(p_my, MASK_7_24); return false; end
 
             if tgt_idx == 0; return true; end
-            # Over-bear: Check src+1..6 using precomputed mask
-            if src_idx <= 5 && has_checkers(p_my, MASKS_TO_6[src_idx]); return false; end
+            # Over-bear: Can only over-bear if no checkers on LOWER points (1 to src_idx-1)
+            # (P1 moves towards lower indices, so "higher" in their direction means lower physical index)
+            if src_idx >= 2 && has_checkers(p_my, MASKS_BELOW_P1[src_idx]); return false; end
             return true
         end
     end

@@ -621,33 +621,141 @@ end
             b = zeros(MVector{28, Int8})
             b[20] = 1
             b[24] = 1
-            
+
             g = make_test_game(board=b, dice=(6, 1))
-            
+
             actions = legal_actions(g)
-            
+
             # D1=6, D2=1.
-            # 20->Off (6). Valid (No checkers > 20).
-            # 24->Off (1). Valid.
-            # Combo (20, 24).
-            a_20_24 = BackgammonNet.encode_action(20, 24) 
-            
-            # 24->Off (6)? Over-bear. Src=24. Check 19..23.
-            # 20 is occupied. So 24->Off(6) is Illegal.
-            # So (24, 20) is Illegal.
+            # Over-bear rule: Can only over-bear if NO checkers on HIGHER points.
+            #
+            # 24->Off (6): Over-bear from 24. Check points > 24: none. LEGAL.
+            # 24->Off (1): Exact bear-off. LEGAL.
+            # 20->Off (6): Over-bear from 20. Check points > 20: checker at 24! BLOCKED.
+            # 20->21 (1): Normal move. LEGAL.
+            #
+            # Valid two-die combos:
+            # (24, 20): 24->off(d1=6), then 20->21(d2=1). VALID.
+            # (20, 24): 24->off(d2=1) first, then 20->off(d1=6). VALID (24 gone, 20 highest).
+            a_20_24 = BackgammonNet.encode_action(20, 24)
             a_24_20 = BackgammonNet.encode_action(24, 20)
-            
-            # 20->21 (1). 21->Off (6).
-            # S2=20 (D2). S1=21 (D1).
-            # Action (21, 20).
+
+            # (21, 20): Would need 20->21(d2=1), then 21->off(d1=6).
+            # But after 20->21, checker at 24 still exists, blocking 21->off(6).
+            # INVALID.
             a_21_20 = BackgammonNet.encode_action(21, 20)
-            
+
             @test a_20_24 in actions
-            @test a_21_20 in actions
-            
-            @test !(a_24_20 in actions)
+            @test a_24_20 in actions
+
+            @test !(a_21_20 in actions)
         end
-        
+
+        @testset "Over-Bear Rule: P0 Highest Point Allowed" begin
+            # P0 has checker on highest occupied point - over-bear always allowed
+            b = zeros(MVector{28, Int8})
+            b[24] = 1  # Single checker at point 24 (highest in home)
+            b[27] = 14 # 14 off
+
+            g = make_test_game(board=b, dice=(6, 5), current_player=0)
+
+            actions = legal_actions(g)
+
+            # 24->off with die 6: over-bear, but 24 is highest. LEGAL.
+            # 24->off with die 5: over-bear, but 24 is highest. LEGAL.
+            # Must use higher die (6) since only one checker.
+            a_pass_24 = BackgammonNet.encode_action(PASS, 24)  # PASS d1=6, use d2=5
+
+            # Actually with only 1 checker, can only use 1 die.
+            # Higher die rule: must use d1=6 if possible.
+            a_24_pass = BackgammonNet.encode_action(24, PASS)  # use d1=6, PASS d2=5
+
+            # One of these should be valid (whichever uses the higher die)
+            @test a_24_pass in actions
+        end
+
+        @testset "Over-Bear Rule: P0 Non-Highest Blocked" begin
+            # P0 has checker NOT on highest point - over-bear blocked
+            b = zeros(MVector{28, Int8})
+            b[20] = 1  # Checker at 20
+            b[23] = 1  # Checker at 23 (higher than 20)
+            b[27] = 13 # 13 off
+
+            g = make_test_game(board=b, dice=(6, 6), remaining=2, current_player=0)
+
+            actions = legal_actions(g)
+
+            # 20->off with die 6: over-bear, but 23 > 20 has checker. BLOCKED.
+            # 23->off with die 6: over-bear from 23. Check > 23: none. LEGAL.
+            # With doubles, action is (s1, s2) both using die value 6.
+            a_20_23 = BackgammonNet.encode_action(20, 23)  # 20->off blocked!
+            a_23_20 = BackgammonNet.encode_action(23, 20)  # 23->off, then 20->off. VALID.
+
+            @test !(a_20_23 in actions)  # Can't start with 20->off
+            @test a_23_20 in actions     # Must do 23 first, then 20 works
+        end
+
+        @testset "Over-Bear Rule: P1 Highest Point Allowed" begin
+            # P1 moves 24->1->off. P1's home is physical 1-6 (canonical 24-19).
+            # For P1, "higher" in their direction means lower physical index.
+            # From P1's canonical perspective, point 24 maps to physical 1.
+            b = zeros(MVector{28, Int8})
+            b[24] = 1  # P1's checker at canonical 24 (physical 1 for P1, closest to off)
+            b[27] = 14 # 14 off
+
+            g = make_test_game(board=b, dice=(6, 5), current_player=1)
+
+            actions = legal_actions(g)
+
+            # P1's canonical 24 = physical 1. With die 6: physical 1-6 = -5 < 0, over-bear.
+            # Check points lower than physical 1: none. LEGAL.
+            a_24_pass = BackgammonNet.encode_action(24, PASS)
+
+            @test a_24_pass in actions
+        end
+
+        @testset "Over-Bear Rule: P1 Non-Highest Blocked" begin
+            # P1 has checker NOT at lowest physical index - over-bear blocked
+            b = zeros(MVector{28, Int8})
+            b[24] = 1  # P1 canonical 24 = physical 1
+            b[21] = 1  # P1 canonical 21 = physical 4
+
+            g = make_test_game(board=b, dice=(6, 6), remaining=2, current_player=1)
+
+            actions = legal_actions(g)
+
+            # From physical 4 with die 6: 4-6 = -2, over-bear.
+            # Check physical points < 4: physical 1 has checker! BLOCKED.
+            # From physical 1 with die 6: 1-6 = -5, over-bear.
+            # Check physical points < 1: none. LEGAL.
+
+            # Canonical: 21->off blocked (24 is "higher" in P1's direction)
+            # Canonical: 24->off, then 21->off (24 gone, 21 now highest). VALID.
+            a_21_24 = BackgammonNet.encode_action(21, 24)  # 21 first - blocked
+            a_24_21 = BackgammonNet.encode_action(24, 21)  # 24 first, then 21. VALID.
+
+            @test !(a_21_24 in actions)
+            @test a_24_21 in actions
+        end
+
+        @testset "Over-Bear Rule: Exact Bear-Off Not Affected" begin
+            # Exact bear-off (not over-bear) should always be allowed
+            b = zeros(MVector{28, Int8})
+            b[19] = 1  # Checker at 19
+            b[24] = 1  # Checker at 24 (higher)
+            b[27] = 13
+
+            g = make_test_game(board=b, dice=(6, 1), current_player=0)
+
+            actions = legal_actions(g)
+
+            # 19->25 with die 6: 19+6=25, exact. Always legal even with checker at 24.
+            # 24->25 with die 1: 24+1=25, exact. Always legal.
+            a_19_24 = BackgammonNet.encode_action(19, 24)
+
+            @test a_19_24 in actions
+        end
+
         @testset "Winning Condition" begin
             b = zeros(MVector{28, Int8})
             b[27] = 14 # Off
