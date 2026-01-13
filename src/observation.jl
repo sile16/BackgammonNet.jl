@@ -14,8 +14,11 @@ const DICE_NORM = 4.0f0         # Max dice count for doubles (remaining_actions 
 const SINGLE_DIE_VALUE = 0.25f0 # 1/4 for non-doubles (one die out of possible 4)
 const PIP_NORM = 375.0f0        # Max pip difference for normalization (~25 * 15)
 
+# Board feature size (24 points + my bar + opp bar + my off + opp off)
+const BOARD_FEATURE_SIZE = 28   # Number of board position features
+
 # Feature section offsets
-const DICE_OFFSET = 28          # Dice features start after board (indices 29-34)
+const DICE_OFFSET = BOARD_FEATURE_SIZE  # Dice features start after board (indices 29-34)
 const BLOT_OFFSET = 38          # Blot detection starts at index 39
 const BLOCK_OFFSET = 62         # Block detection starts at index 63
 
@@ -116,7 +119,7 @@ function observe_full(g::BackgammonGame)
     obs = zeros(Float32, OBS_SIZE_FULL)
 
     # Extract all 28 board values ONCE into stack-allocated array
-    vals = MVector{28, Int8}(undef)
+    vals = MVector{BOARD_FEATURE_SIZE, Int8}(undef)
     @inbounds for i in 1:DICE_OFFSET
         vals[i] = g[i]
         obs[i] = Float32(vals[i]) / CHECKER_NORM
@@ -238,7 +241,7 @@ function observe_full!(obs::AbstractVector{Float32}, g::BackgammonGame)
     end
 
     # Extract all 28 board values ONCE into stack-allocated array
-    vals = MVector{28, Int8}(undef)
+    vals = MVector{BOARD_FEATURE_SIZE, Int8}(undef)
     @inbounds for i in 1:DICE_OFFSET
         vals[i] = g[i]
         obs[i] = Float32(vals[i]) / CHECKER_NORM
