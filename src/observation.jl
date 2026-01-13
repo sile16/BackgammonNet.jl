@@ -31,6 +31,30 @@ const IDX_CAN_BEAR_OPP = 37     # Can opponent bear off
 const IDX_PIP_DIFF = 38         # Normalized pip count difference
 
 """
+    _encode_dice!(obs::AbstractVector{Float32}, d1, d2, remaining_actions)
+
+Internal helper to encode dice values into observation vector.
+Writes to indices DICE_OFFSET+1 through DICE_OFFSET+6.
+
+For doubles: encodes remaining dice count (remaining_actions * 2) / 4 at die position.
+For non-doubles: encodes 0.25 at each die position.
+"""
+@inline function _encode_dice!(obs::AbstractVector{Float32}, d1, d2, remaining_actions)
+    if remaining_actions > 0 && d1 > 0 && d2 > 0
+        if d1 == d2
+            # Doubles: remaining_actions: 2 -> 4 dice, 1 -> 2 dice
+            count = Float32(Int(remaining_actions) * 2) / DICE_NORM
+            @inbounds obs[DICE_OFFSET + d1] = count
+        else
+            # Non-doubles: each die contributes 1/4 of max
+            @inbounds obs[DICE_OFFSET + d1] = SINGLE_DIE_VALUE
+            @inbounds obs[DICE_OFFSET + d2] = SINGLE_DIE_VALUE
+        end
+    end
+    return nothing
+end
+
+"""
     observe_fast(g::BackgammonGame) -> Vector{Float32}
 
 Generate a compact 34-element feature vector for the current game state.
@@ -58,20 +82,7 @@ function observe_fast(g::BackgammonGame)
     end
 
     # Dice encoding
-    d1 = g.dice[1]
-    d2 = g.dice[2]
-
-    if g.remaining_actions > 0 && d1 > 0 && d2 > 0
-        if d1 == d2
-            # Doubles: remaining_actions: 2 -> 4 dice. 1 -> 2 dice.
-            count = Float32(Int(g.remaining_actions) * 2) / DICE_NORM
-            @inbounds obs[DICE_OFFSET + d1] = count
-        else
-            # Non-doubles: each die contributes 1/4 of max
-            @inbounds obs[DICE_OFFSET + d1] = SINGLE_DIE_VALUE
-            @inbounds obs[DICE_OFFSET + d2] = SINGLE_DIE_VALUE
-        end
-    end
+    _encode_dice!(obs, g.dice[1], g.dice[2], g.remaining_actions)
 
     return obs
 end
@@ -111,18 +122,8 @@ function observe_full(g::BackgammonGame)
         obs[i] = Float32(vals[i]) / CHECKER_NORM
     end
 
-    # Dice encoding (same as observe_fast)
-    d1 = g.dice[1]
-    d2 = g.dice[2]
-    if g.remaining_actions > 0 && d1 > 0 && d2 > 0
-        if d1 == d2
-            count = Float32(Int(g.remaining_actions) * 2) / DICE_NORM
-            @inbounds obs[DICE_OFFSET + d1] = count
-        else
-            @inbounds obs[DICE_OFFSET + d1] = SINGLE_DIE_VALUE
-            @inbounds obs[DICE_OFFSET + d2] = SINGLE_DIE_VALUE
-        end
-    end
+    # Dice encoding
+    _encode_dice!(obs, g.dice[1], g.dice[2], g.remaining_actions)
 
     # Heuristics - use cached vals instead of g[i]
     min_my = BAR_PIP_VALUE
@@ -208,18 +209,7 @@ function observe_fast!(obs::AbstractVector{Float32}, g::BackgammonGame)
     end
 
     # Dice encoding
-    d1 = g.dice[1]
-    d2 = g.dice[2]
-
-    if g.remaining_actions > 0 && d1 > 0 && d2 > 0
-        if d1 == d2
-            count = Float32(Int(g.remaining_actions) * 2) / DICE_NORM
-            @inbounds obs[DICE_OFFSET + d1] = count
-        else
-            @inbounds obs[DICE_OFFSET + d1] = SINGLE_DIE_VALUE
-            @inbounds obs[DICE_OFFSET + d2] = SINGLE_DIE_VALUE
-        end
-    end
+    _encode_dice!(obs, g.dice[1], g.dice[2], g.remaining_actions)
 
     return obs
 end
@@ -255,17 +245,7 @@ function observe_full!(obs::AbstractVector{Float32}, g::BackgammonGame)
     end
 
     # Dice encoding
-    d1 = g.dice[1]
-    d2 = g.dice[2]
-    if g.remaining_actions > 0 && d1 > 0 && d2 > 0
-        if d1 == d2
-            count = Float32(Int(g.remaining_actions) * 2) / DICE_NORM
-            @inbounds obs[DICE_OFFSET + d1] = count
-        else
-            @inbounds obs[DICE_OFFSET + d1] = SINGLE_DIE_VALUE
-            @inbounds obs[DICE_OFFSET + d2] = SINGLE_DIE_VALUE
-        end
-    end
+    _encode_dice!(obs, g.dice[1], g.dice[2], g.remaining_actions)
 
     # Heuristics
     min_my = BAR_PIP_VALUE
