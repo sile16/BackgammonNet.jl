@@ -893,9 +893,96 @@ end
                         obs = vector_observation(g)
                         @test length(obs) == 86
                         @test all(obs .<= 1.0) && all(obs .>= -1.0)
-                        
+
                         fast = BackgammonNet.observe_fast(g)
                         @test length(fast) == 34
+
+                        # Semantic tests: observe_fast and observe_full share first 34 elements
+                        sample_chance!(g)
+                        obs_full = vector_observation(g)
+                        obs_fast = BackgammonNet.observe_fast(g)
+                        @test obs_full[1:34] ≈ obs_fast atol=1e-6
+
+                        # Test board encoding (indices 1-28)
+                        # Initial position: P0 has 2 on point 1, P0 view
+                        g2 = initial_state(first_player=0)
+                        sample_chance!(g2)
+                        obs2 = vector_observation(g2)
+                        @test obs2[1] ≈ 2.0f0 / 15.0f0 atol=1e-6  # P0 has 2 on point 1
+
+                        # Test dice encoding (indices 29-34)
+                        # Non-doubles: both die positions should be 0.25
+                        b = zeros(MVector{28, Int8})
+                        b[1] = 2
+                        g3 = make_test_game(board=b, dice=(3, 5), current_player=0)
+                        obs3 = BackgammonNet.observe_fast(g3)
+                        @test obs3[28 + 3] ≈ 0.25f0 atol=1e-6  # Die 1 = 3
+                        @test obs3[28 + 5] ≈ 0.25f0 atol=1e-6  # Die 2 = 5
+                        @test obs3[28 + 1] == 0.0f0  # Other dice positions zero
+                        @test obs3[28 + 2] == 0.0f0
+                        @test obs3[28 + 4] == 0.0f0
+                        @test obs3[28 + 6] == 0.0f0
+
+                        # Test doubles encoding
+                        g4 = make_test_game(board=b, dice=(4, 4), remaining=2, current_player=0)
+                        obs4 = BackgammonNet.observe_fast(g4)
+                        @test obs4[28 + 4] ≈ 1.0f0 atol=1e-6  # remaining=2 -> 4 dice -> 4/4 = 1.0
+
+                        g5 = make_test_game(board=b, dice=(4, 4), remaining=1, current_player=0)
+                        obs5 = BackgammonNet.observe_fast(g5)
+                        @test obs5[28 + 4] ≈ 0.5f0 atol=1e-6  # remaining=1 -> 2 dice -> 2/4 = 0.5
+
+                        # Test blot detection (indices 39-62 for full observation)
+                        b_blot = zeros(MVector{28, Int8})
+                        b_blot[5] = 1   # My blot at point 5
+                        b_blot[10] = -1  # Opponent blot at point 10
+                        g6 = make_test_game(board=b_blot, dice=(1, 2), current_player=0)
+                        obs6 = vector_observation(g6)
+                        @test obs6[38 + 5] == 1.0f0   # My blot at index 38+5=43
+                        @test obs6[38 + 10] == -1.0f0  # Opp blot at index 38+10=48
+
+                        # Test block detection (indices 63-86 for full observation)
+                        b_block = zeros(MVector{28, Int8})
+                        b_block[3] = 3   # My block (3 checkers) at point 3
+                        b_block[7] = -2  # Opponent block at point 7
+                        g7 = make_test_game(board=b_block, dice=(1, 2), current_player=0)
+                        obs7 = vector_observation(g7)
+                        @test obs7[62 + 3] == 1.0f0   # My block at index 62+3=65
+                        @test obs7[62 + 7] == -1.0f0  # Opp block at index 62+7=69
+
+                        # Test race detection (index 35)
+                        # Race: no contact, my rearmost checker ahead of opponent's foremost
+                        b_race = zeros(MVector{28, Int8})
+                        b_race[20] = 5  # My checkers in home
+                        b_race[5] = -5   # Opponent checkers far away
+                        g8 = make_test_game(board=b_race, dice=(1, 2), current_player=0)
+                        obs8 = vector_observation(g8)
+                        @test obs8[35] == 1.0f0  # Is a race (min_my=20 > max_opp=5)
+
+                        # Not a race: contact exists
+                        b_contact = zeros(MVector{28, Int8})
+                        b_contact[10] = 1  # My checker
+                        b_contact[15] = -1  # Opponent ahead of me
+                        g9 = make_test_game(board=b_contact, dice=(1, 2), current_player=0)
+                        obs9 = vector_observation(g9)
+                        @test obs9[35] == 0.0f0  # Not a race (min_my=10 < max_opp=15)
+
+                        # Test bearing off capability (indices 36, 37)
+                        b_bearoff = zeros(MVector{28, Int8})
+                        b_bearoff[20] = 5  # My checkers all in home (19-24)
+                        b_bearoff[2] = -5   # Opp checkers all in their home (1-6)
+                        g10 = make_test_game(board=b_bearoff, dice=(1, 2), current_player=0)
+                        obs10 = vector_observation(g10)
+                        @test obs10[36] == 1.0f0  # can_bear_my = true
+                        @test obs10[37] == 1.0f0  # can_bear_opp = true
+
+                        # Cannot bear off: checker outside home
+                        b_no_bearoff = zeros(MVector{28, Int8})
+                        b_no_bearoff[10] = 1  # My checker outside home
+                        b_no_bearoff[20] = 4  # Rest in home
+                        g11 = make_test_game(board=b_no_bearoff, dice=(1, 2), current_player=0)
+                        obs11 = vector_observation(g11)
+                        @test obs11[36] == 0.0f0  # can_bear_my = false
                     end
                 
                     @testset "Scoring & Perspective" begin
