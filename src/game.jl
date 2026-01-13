@@ -383,6 +383,9 @@ function apply_chance!(g::BackgammonGame, outcome_idx::Integer)
     if !is_chance_node(g)
         error("Cannot apply chance action on a deterministic node.")
     end
+    if g.doubles_only && !(outcome_idx in DOUBLES_INDICES)
+        error("In doubles_only mode, only doubles outcomes are valid. Got index $outcome_idx.")
+    end
     d1, d2 = DICE_OUTCOMES[outcome_idx]
     g.dice = SVector{2, Int8}(Int8(d1), Int8(d2))
     g.remaining_actions = (d1 == d2) ? 2 : 1

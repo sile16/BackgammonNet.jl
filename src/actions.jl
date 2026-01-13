@@ -111,10 +111,11 @@ function get_legal_source_locs(p0::UInt128, p1::UInt128, cp::Integer, die::Integ
 end
 
 const CHANCE_ACTIONS = collect(1:21)  # Pre-allocated chance node actions
+const CHANCE_ACTIONS_DOUBLES_ONLY = copy(DOUBLES_INDICES)  # Only doubles outcomes
 
 function get_legal_actions(g::BackgammonGame)
     if is_chance_node(g)
-        return CHANCE_ACTIONS
+        return g.doubles_only ? CHANCE_ACTIONS_DOUBLES_ONLY : CHANCE_ACTIONS
     end
 
     d1 = Int(g.dice[1])

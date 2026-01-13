@@ -873,6 +873,28 @@ end
                         @test length(outcomes_normal) == 21
                         total_prob_normal = sum(p for (_, p) in outcomes_normal)
                         @test total_prob_normal ≈ 1.0f0 atol=1e-5
+
+                        # Test apply_chance! rejects non-doubles in doubles_only mode
+                        g7 = initial_state(doubles_only=true, first_player=0)
+                        @test is_chance_node(g7)
+                        # Index 2 is (1,2) - a non-double
+                        @test_throws ErrorException apply_chance!(g7, 2)
+                        # Index 1 is (1,1) - a double, should work
+                        g8 = initial_state(doubles_only=true, first_player=0)
+                        @test_nowarn apply_chance!(g8, 1)
+                        @test g8.dice == [1, 1]
+
+                        # Test legal_actions at chance nodes respects doubles_only
+                        g9 = initial_state(doubles_only=true, first_player=0)
+                        @test is_chance_node(g9)
+                        chance_actions = legal_actions(g9)
+                        # In doubles_only mode, only 6 valid outcomes (indices 1,7,12,16,19,21)
+                        @test length(chance_actions) == 6
+                        @test all(idx -> idx in (1, 7, 12, 16, 19, 21), chance_actions)
+
+                        # Normal mode should still return 21 chance actions
+                        g10 = initial_state(first_player=0)
+                        @test length(legal_actions(g10)) == 21
                     end
 
                     @testset "Combined short_game and doubles_only" begin
