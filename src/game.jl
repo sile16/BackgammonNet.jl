@@ -97,7 +97,19 @@ mutable struct BackgammonGame
     _sources_buffer2::Vector{Int}   # Second buffer for nested source lookups
 end
 
-# Helper to create pre-allocated buffers for a new game
+"""
+    _create_game_buffers() -> (Vector{Int}, Vector{Int}, Vector{Int}, Vector{Int})
+
+Internal helper to create pre-allocated buffers for a new game.
+
+Returns a tuple of four vectors with pre-allocated capacity:
+- `history`: Action history buffer (capacity: $(HISTORY_BUFFER_SIZE))
+- `actions_buf`: Legal actions buffer (capacity: $(ACTIONS_BUFFER_SIZE))
+- `src_buf1`: Source locations buffer 1 (capacity: $(SOURCES_BUFFER_SIZE))
+- `src_buf2`: Source locations buffer 2 (capacity: $(SOURCES_BUFFER_SIZE))
+
+These buffers are reused during gameplay to reduce GC pressure.
+"""
 function _create_game_buffers()
     history = Int[]
     sizehint!(history, HISTORY_BUFFER_SIZE)
@@ -126,14 +138,30 @@ end
 
 Base.show(io::IO, g::BackgammonGame) = print(io, "BackgammonGame(p=$(g.current_player), dice=$(g.dice))")
 
-# Helper to get initial board positions
+"""
+    _get_initial_boards(short_game::Bool) -> (UInt128, UInt128)
+
+Internal helper to retrieve initial bitboard positions.
+
+Returns `(p0, p1)` tuple with player 0 and player 1 starting positions.
+If `short_game` is true, returns positions with pieces closer to bearing off
+(faster games for training). Otherwise, returns standard backgammon starting positions.
+"""
 @inline function _get_initial_boards(short_game::Bool)
     p0 = short_game ? INIT_P0_SHORT : INIT_P0_STANDARD
     p1 = short_game ? INIT_P1_SHORT : INIT_P1_STANDARD
     return p0, p1
 end
 
-# Helper to resolve first player (random if nothing, validates 0 or 1)
+"""
+    _resolve_first_player(first_player::Union{Nothing, Integer}) -> Int
+
+Internal helper to determine the starting player.
+
+If `first_player` is `nothing`, randomly selects 0 or 1.
+If `first_player` is 0 or 1, returns that value.
+Throws `ArgumentError` if `first_player` is any other integer value.
+"""
 @inline function _resolve_first_player(first_player::Union{Nothing, Integer})
     if isnothing(first_player)
         return rand(Random.default_rng(), 0:1)
