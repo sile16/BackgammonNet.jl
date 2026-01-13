@@ -267,6 +267,24 @@ end
         @test a1 in actions
         @test a2 in actions
         @test a3 in actions
+
+        # For doubles with single-die usage, legal_actions generates loc|PASS, not PASS|loc
+        # is_action_valid should match this behavior
+        b2 = zeros(MVector{28, Int8})
+        b2[1] = 1   # Single checker at point 1
+        b2[5] = -2  # Block at 5 (blocks second die: 1->3, then 3->5 blocked)
+        g2 = make_test_game(board=b2, dice=(2, 2), remaining=2, current_player=0)
+        actions2 = legal_actions(g2)
+
+        # Should generate (1, PASS) since 1->3 works but 3->5 is blocked
+        a_valid = BackgammonNet.encode_action(1, PASS)
+        a_invalid = BackgammonNet.encode_action(PASS, 1)  # PASS|1 not in valid space
+
+        @test a_valid in actions2
+        @test !(a_invalid in actions2)
+        # is_action_valid should agree with legal_actions
+        @test is_action_valid(g2, a_valid)
+        @test !is_action_valid(g2, a_invalid)
     end
 
     @testset "Higher Die Rule" begin

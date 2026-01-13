@@ -277,16 +277,13 @@ function is_action_valid(g::BackgammonGame, action_idx::Integer)
                 end
             end
         elseif loc1 != PASS_LOC
-            # loc2 is PASS
+            # loc2 is PASS - this is the only valid single-die format for doubles
+            # (legal_actions generates loc1|PASS, not PASS|loc2 for doubles)
             if is_move_legal_bits(p0, p1, cp, loc1, d1)
                 can_use_d1_only = true
             end
-        elseif loc2 != PASS_LOC
-            # loc1 is PASS
-            if is_move_legal_bits(p0, p1, cp, loc2, d1)
-                can_use_d2_only = true
-            end
         end
+        # Note: PASS|loc2 for doubles is NOT valid - legal_actions never generates it
     else
         # Non-doubles: loc1 uses d1, loc2 uses d2
         if loc1 != PASS_LOC && loc2 != PASS_LOC
