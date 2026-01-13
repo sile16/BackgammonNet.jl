@@ -321,4 +321,3 @@ function observe_full!(obs::AbstractVector{Float32}, g::BackgammonGame)
 end
 
 const vector_observation = observe_full
-const observe = observe_full

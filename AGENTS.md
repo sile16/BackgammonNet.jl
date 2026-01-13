@@ -95,3 +95,51 @@ A game starts at a chance node (dice = [0,0]). Call `sample_chance!` or use `ste
 - Forced maximum dice usage
 - Higher die preference when only one die can be used
 - Gammon/Backgammon scoring multipliers (reward: 1/2/3)
+
+### Valid Shortcuts in Logic Validation
+
+**Doubles don't need higher-die or multi-action enforcement:**
+- For doubles (e.g., rolling 3-3), all 4 moves use the **same die value**
+- The "higher die" rule only applies when dice have different values (e.g., 5-3)
+- No special validation needed because all moves are equivalent
+- The code gates higher-die logic with `if d1 != d2` in `src/actions.jl`
+
+**Why this is correct:**
+- Non-doubles (e.g., 5-3): If only one die can be used, must use the higher (5)
+- Doubles (e.g., 3-3): All moves are "3", so there's no higher/lower distinction
+- The max-dice rule (use as many dice as possible) is still enforced for doubles
+
+**Compile-time validation control:**
+- `ENABLE_SANITY_CHECKS` constant controls redundant validation in `is_action_valid`
+- Set to `true` during development for correctness verification
+- Set to `false` for large-scale training once `legal_actions` is thoroughly tested
+- The duplicate validation between `legal_actions` and `is_action_valid` is intentional
+
+**Known behavior - history on error:**
+- In `apply_action!`, history is updated before moves are validated
+- When `ENABLE_SANITY_CHECKS=true` (default), invalid actions are rejected before history update
+- When `ENABLE_SANITY_CHECKS=false`, an invalid action may be added to history before error is thrown
+- This is acceptable since the error propagates and the game state is unusable anyway
+- Callers catching errors should treat the game as corrupted
+
+### Observation Code Duplication
+
+The observation functions appear duplicated but serve different purposes:
+- `observe_fast` / `observe_full`: Allocating versions for convenience
+- `observe_fast!` / `observe_full!`: In-place versions for high-throughput scenarios
+
+This is an intentional performance pattern. For MCTS or batch evaluation, use the in-place versions
+with pre-allocated buffers to avoid GC pressure.
+
+### Performance Tradeoffs in legal_actions
+
+**Why `unique!(actions)` is needed (line 250):**
+- For non-doubles, paths A (d1 then d2) and B (d2 then d1) can generate the same action
+- Example: Moving same checker with both dice may have identical encoded actions
+- `unique!` deduplicates in-place to avoid returning duplicate actions
+
+**Why `decode_action` is called in filter! loops:**
+- This is called for every action during filtering, which has some overhead
+- Alternative: Track max_usage per-action during generation (more complex code)
+- Current approach prioritizes correctness and maintainability over micro-optimization
+- For RL training, actions are typically sampled from policy, not enumerated

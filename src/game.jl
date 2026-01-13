@@ -1,6 +1,3 @@
-using StaticArrays
-using Random
-
 # --- Game Constants ---
 const NUM_POINTS = 24           # Standard backgammon board points
 const MAX_CHECKERS = 15         # Each player has 15 checkers
@@ -63,6 +60,7 @@ const INIT_P1_SHORT = (UInt128(1) << (1<<2)) | (UInt128(3) << (2<<2)) | (UInt128
 const ACTIONS_BUFFER_SIZE = 200     # Max legal actions in any position
 const SOURCES_BUFFER_SIZE = 25      # Max source locations (24 points + bar)
 const HISTORY_BUFFER_SIZE = 120     # Typical game length in actions
+const MAX_CHANCE_ITERATIONS = 1000  # Safety limit for sample_chance! loop
 
 """
     BackgammonGame
@@ -215,21 +213,44 @@ function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing
 end
 
 # --- Bit Manipulation Helpers ---
+
+"""
+    get_count(board::UInt128, idx::Int) -> UInt128
+
+Extract the checker count at position `idx` from a bitboard.
+Each position uses a 4-bit nibble, so index `i` is at bit position `i << 2`.
+Returns 0-15 (though valid counts are 0-15 checkers).
+"""
 @inline function get_count(board::UInt128, idx::Int)
     return (board >> (idx << 2)) & 0xF
 end
 
+"""
+    incr_count(board::UInt128, idx::Int) -> UInt128
+
+Increment the checker count at position `idx` by 1.
+Returns a new bitboard with the updated count.
+Warning: Does not check for overflow (count > 15).
+"""
 @inline function incr_count(board::UInt128, idx::Int)
     return board + (UInt128(1) << (idx << 2))
 end
 
+"""
+    decr_count(board::UInt128, idx::Int) -> UInt128
+
+Decrement the checker count at position `idx` by 1.
+Returns a new bitboard with the updated count.
+Warning: Does not check for underflow (count == 0).
+"""
 @inline function decr_count(board::UInt128, idx::Int)
     return board - (UInt128(1) << (idx << 2))
 end
 
 # --- Sanity Check Helpers ---
-# TODO: Remove sanity checks for large-scale training (set ENABLE_SANITY_CHECKS = false)
-# This is a compile-time constant. Changing it requires recompiling the module.
+# NOTE: Sanity checks are controlled by ENABLE_SANITY_CHECKS (compile-time constant).
+# Set to false for large-scale training once legal action generation is thoroughly tested.
+# Changing this constant requires recompiling the module.
 const ENABLE_SANITY_CHECKS = true
 
 """
@@ -389,11 +410,17 @@ const DOUBLES_INDICES = [1, 7, 12, 16, 19, 21]
 const DOUBLES_ONLY_PROBS = ntuple(i -> i in DOUBLES_INDICES ? (1.0f0 / 6.0f0) : 0.0f0, 21)
 const DOUBLES_ONLY_OUTCOMES = collect(zip(1:21, DOUBLES_ONLY_PROBS))
 
+"""
+    switch_turn!(g::BackgammonGame)
+
+Internal function to switch the current player and reset dice to indicate a chance node.
+Sets `remaining_actions = 1` as a placeholder; this value is overwritten by `apply_chance!`
+when dice are actually rolled (to 2 for doubles, 1 for non-doubles).
+"""
 function switch_turn!(g::BackgammonGame)
     g.current_player = 1 - g.current_player
-    # Set dice to 0 to indicate waiting for roll
-    g.dice = SVector{2, Int8}(0, 0)
-    g.remaining_actions = 1 # Will be updated when dice are set
+    g.dice = SVector{2, Int8}(0, 0)  # Zero dice indicates chance node (waiting for roll)
+    g.remaining_actions = 1  # Placeholder; overwritten by apply_chance!
 end
 
 # --- Chance / Stochastic Interface ---
@@ -475,7 +502,19 @@ function apply_action!(g::BackgammonGame, action_idx::Integer)
             end
         end
     else
+        # loc1 not legal first, try loc2 first
+        # Must verify legality to prevent state corruption (even when ENABLE_SANITY_CHECKS=false)
+        if !is_move_legal(g, loc2, d2)
+            error("Invalid action $action_idx: neither move ordering is legal")
+        end
+        p0_bak, p1_bak = g.p0, g.p1
+        terminated_bak, reward_bak = g.terminated, g.reward
         apply_single_move!(g, loc2, d2)
+        if !is_move_legal(g, loc1, d1)
+            g.p0, g.p1 = p0_bak, p1_bak
+            g.terminated, g.reward = terminated_bak, reward_bak
+            error("Invalid action $action_idx: neither move ordering is legal")
+        end
         apply_single_move!(g, loc1, d1)
     end
     
@@ -503,7 +542,6 @@ function sample_chance!(g::BackgammonGame, rng::AbstractRNG=Random.default_rng()
     # Continuously apply random chance actions until a deterministic state is returned
     # with at least one valid move (not just PASS|PASS)
     iters = 0
-    max_iters = 1000
 
     while true
         if g.terminated
@@ -511,8 +549,8 @@ function sample_chance!(g::BackgammonGame, rng::AbstractRNG=Random.default_rng()
         end
 
         iters += 1
-        if iters > max_iters
-            error("Infinite loop detected in sample_chance! (exceeded $max_iters iterations)")
+        if iters > MAX_CHANCE_ITERATIONS
+            error("Infinite loop detected in sample_chance! (exceeded $MAX_CHANCE_ITERATIONS iterations)")
         end
 
         if is_chance_node(g)
@@ -569,8 +607,20 @@ function step!(g::BackgammonGame, action::Integer, rng::AbstractRNG=Random.defau
     return g
 end
 
-# Internal apply move for play!
-# Uses apply_move_internal from actions.jl for move logic, then handles termination.
+"""
+    apply_single_move!(g::BackgammonGame, loc::Integer, die::Integer)
+
+Internal function to apply a single checker move and check for game termination.
+
+Delegates the actual move logic to `apply_move_internal` (from actions.jl), then
+checks if the current player has borne off all 15 checkers. If so, sets
+`g.terminated = true` and computes the reward (1 for single, 2 for gammon,
+3 for backgammon).
+
+# Arguments
+- `loc`: Source location (0=bar, 1-24=points, 25=pass)
+- `die`: Die value used for this move (1-6)
+"""
 function apply_single_move!(g::BackgammonGame, loc::Integer, die::Integer)
     if loc == PASS_LOC; return; end
 
@@ -615,7 +665,26 @@ function apply_single_move!(g::BackgammonGame, loc::Integer, die::Integer)
     end
 end
 
-# Pure function to check move legality on bitboards (shared with actions.jl)
+"""
+    is_move_legal_bits(p0::UInt128, p1::UInt128, cp::Integer, loc::Integer, die::Integer) -> Bool
+
+Pure function to check if a single move is legal on the given bitboard state.
+
+Validates:
+1. Source has checkers belonging to current player
+2. Bar priority (must move from bar first if checkers are there)
+3. Target is not blocked (opponent has < 2 checkers)
+4. Bearing off rules (all checkers in home board, over-bear from highest point only)
+
+# Arguments
+- `p0`, `p1`: Bitboard states for player 0 and player 1
+- `cp`: Current player (0 or 1)
+- `loc`: Source location in canonical coordinates (0=bar, 1-24=points, 25=pass)
+- `die`: Die value (1-6)
+
+# Returns
+`true` if the move is legal, `false` otherwise. Always returns `true` for pass (loc=25).
+"""
 function is_move_legal_bits(p0::UInt128, p1::UInt128, cp::Integer, loc::Integer, die::Integer)
     if loc == PASS_LOC; return true; end
 

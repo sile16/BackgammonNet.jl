@@ -1,5 +1,9 @@
 # Actions.jl - Optimized for Bitboards
 
+# Hint size for source location vectors in allocating functions.
+# Typically only a few locations are valid sources per die (checkers spread across 2-8 points).
+const SOURCES_HINT_SIZE = 8
+
 function encode_action(loc1::Integer, loc2::Integer)
     return Int((loc1 * 26) + loc2 + 1)
 end
@@ -17,8 +21,25 @@ function action_string(action_idx::Integer)
     return "$(l_str(l1)) | $(l_str(l2))"
 end
 
-# Pure function to apply a move on bitboards.
-# Used by both legal action generation AND apply_single_move! in game.jl.
+"""
+    apply_move_internal(p0::UInt128, p1::UInt128, cp::Integer, loc::Integer, die::Integer) -> (UInt128, UInt128)
+
+Pure function to apply a single move on bitboards, returning the new state.
+
+Used by both legal action generation (to simulate moves) and `apply_single_move!`
+in game.jl (to actually execute moves). This ensures move logic is consistent
+between validation and execution.
+
+# Arguments
+- `p0`, `p1`: Current bitboard states for player 0 and player 1
+- `cp`: Current player (0 or 1)
+- `loc`: Source location in canonical coordinates (0=bar, 1-24=points, 25=pass)
+- `die`: Die value (1-6)
+
+# Returns
+A tuple `(new_p0, new_p1)` with the updated bitboard states after the move.
+Handles hitting (sending opponent checker to bar) automatically.
+"""
 @inline function apply_move_internal(p0::UInt128, p1::UInt128, cp::Integer, loc::Integer, die::Integer)
     if loc == PASS_LOC; return p0, p1; end
 
@@ -72,7 +93,7 @@ end
         end
     end
 
-    # TODO: Remove for large-scale training (set ENABLE_SANITY_CHECKS = false in game.jl)
+    # NOTE: Controlled by ENABLE_SANITY_CHECKS in game.jl (set to false for large-scale training)
     sanity_check_bitboard(p0, p1)
 
     return p0, p1
@@ -117,7 +138,7 @@ end
 # Allocating version for backwards compatibility and use in is_action_valid
 function get_legal_source_locs(p0::UInt128, p1::UInt128, cp::Integer, die::Integer)
     locs = Int[]
-    sizehint!(locs, 8)
+    sizehint!(locs, SOURCES_HINT_SIZE)
     return get_legal_source_locs!(locs, p0, p1, cp, die)
 end
 

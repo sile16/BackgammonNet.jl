@@ -3,15 +3,15 @@ using StaticArrays
 using Random
 using BackgammonNet
 
-# Constants for test setup
+# Internal bitboard indices (for test setup only)
 const IDX_P1_OFF = 0
 const IDX_P0_OFF = 25
 const IDX_P0_BAR = 26
 const IDX_P1_BAR = 27
 
-# Re-implement constants locally for clarity in tests
-const PASS = 25
-const BAR = 0
+# Use exported constants from BackgammonNet
+const PASS = PASS_LOC
+const BAR = BAR_LOC
 
 function make_test_game(; board=nothing, dice=(1, 2), remaining=1, current_player=0)
     # Parse Canonical Board Vector into Bitboards
@@ -800,757 +800,875 @@ end
             @test g[17] == -1
         end
     end
-                
-                    @testset "Full Random Game" begin
-                        # Use seeded RNG for reproducibility
-                        rng = Random.MersenneTwister(42)
-                        g = initial_state(first_player=0)
-                        sample_chance!(g, rng) # Start with rolled dice
-
-                        step_count = 0
-                        max_steps = 10000
-
-                        while !game_terminated(g) && step_count < max_steps
-                            actions = legal_actions(g)
-                            if isempty(actions)
-                                break
-                            end
-
-                            a = actions[rand(rng, 1:length(actions))]
-                            step!(g, a, rng)
-                            
-                            step_count += 1
-                        end
-                        
-                        @test game_terminated(g)
-                        @test step_count < max_steps
-                        @test g.reward != 0.0f0
-                    end
-                
-                    @testset "Reset" begin
-                        g = initial_state()
-                        sample_chance!(g)
-                        apply_action!(g, legal_actions(g)[1])
-                        @test length(g.history) > 0
-
-                        reset!(g)
-                        @test length(g.history) == 0
-                        @test is_chance_node(g)
-                    end
-
-                    @testset "First Player Selection" begin
-                        # Test initial_state with explicit first_player
-                        g0 = initial_state(first_player=0)
-                        @test g0.current_player == 0
-
-                        g1 = initial_state(first_player=1)
-                        @test g1.current_player == 1
-
-                        # Test reset! with explicit first_player
-                        reset!(g0, first_player=1)
-                        @test g0.current_player == 1
-
-                        reset!(g1, first_player=0)
-                        @test g1.current_player == 0
-
-                        # Test default (random) still works
-                        g = initial_state()
-                        @test g.current_player in [0, 1]
-
-                        # Test invalid first_player values are rejected
-                        @test_throws ArgumentError initial_state(first_player=2)
-                        @test_throws ArgumentError initial_state(first_player=-1)
-                        @test_throws ArgumentError initial_state(first_player=100)
-
-                        g = initial_state(first_player=0)
-                        @test_throws ArgumentError reset!(g, first_player=2)
-                        @test_throws ArgumentError reset!(g, first_player=-1)
-                    end
-
-                    @testset "Short Game Mode" begin
-                        # Test initial_state with short_game
-                        g = initial_state(short_game=true, first_player=0)
-                        @test is_chance_node(g)
-
-                        # Verify short game board position for P0 (from canonical perspective)
-                        # P0 at indices: 4(2), 12(1), 15(2), 16(3), 18(3), 21(3), 22(1)
-                        sample_chance!(g)
-                        @test g[4] == 2   # P0 has 2 on point 4
-                        @test g[12] == 1  # P0 has 1 on point 12
-                        @test g[15] == 2  # P0 has 2 on point 15
-                        @test g[16] == 3  # P0 has 3 on point 16
-                        @test g[18] == 3  # P0 has 3 on point 18
-                        @test g[21] == 3  # P0 has 3 on point 21
-                        @test g[22] == 1  # P0 has 1 on point 22
-
-                        # Verify P1 positions (negative from P0 perspective)
-                        # P1 at indices: 1(1), 2(3), 5(3), 7(3), 8(2), 11(1), 19(2)
-                        @test g[1] == -1  # P1 has 1 on point 1
-                        @test g[2] == -3  # P1 has 3 on point 2
-                        @test g[5] == -3  # P1 has 3 on point 5
-                        @test g[7] == -3  # P1 has 3 on point 7
-                        @test g[8] == -2  # P1 has 2 on point 8
-                        @test g[11] == -1 # P1 has 1 on point 11
-                        @test g[19] == -2 # P1 has 2 on point 19
-
-                        # Test reset! with short_game
-                        g2 = initial_state(first_player=0)
-                        reset!(g2, short_game=true, first_player=0)
-                        sample_chance!(g2)
-                        @test g2[4] == 2   # Verify short game position after reset
-                        @test g2[16] == 3
-                    end
-
-                    @testset "Doubles Only Mode" begin
-                        # Test initial_state with doubles_only
-                        g = initial_state(doubles_only=true, first_player=0)
-                        @test g.doubles_only == true
-                        @test is_chance_node(g)
-
-                        # Sample chance and verify we get doubles
-                        sample_chance!(g)
-                        @test g.dice[1] == g.dice[2]  # Must be doubles
-                        @test g.remaining_actions == 2  # Doubles give 2 actions
-
-                        # chance_outcomes should keep 21 entries with zeros for non-doubles
-                        reset!(g, doubles_only=true, first_player=0)
-                        outcomes = chance_outcomes(g)
-                        @test length(outcomes) == 21
-                        for (idx, prob) in outcomes
-                            if idx in (1, 7, 12, 16, 19, 21)
-                                @test prob ≈ 1/6 atol=1e-6
-                            else
-                                @test prob == 0.0f0
-                            end
-                        end
-
-                        # Test multiple rolls are all doubles
-                        for _ in 1:20
-                            reset!(g, doubles_only=true, first_player=0)
-                            sample_chance!(g)
-                            @test g.dice[1] == g.dice[2]
-                            @test g.dice[1] in 1:6
-                        end
-
-                        # Test reset! preserves doubles_only setting when specified
-                        g2 = initial_state(first_player=0)
-                        @test g2.doubles_only == false
-                        reset!(g2, doubles_only=true, first_player=0)
-                        @test g2.doubles_only == true
-                        sample_chance!(g2)
-                        @test g2.dice[1] == g2.dice[2]
-
-                        # Test that regular game can still roll non-doubles
-                        g3 = initial_state(first_player=0)
-                        non_doubles_found = false
-                        for _ in 1:100
-                            reset!(g3, first_player=0)
-                            sample_chance!(g3)
-                            if g3.dice[1] != g3.dice[2]
-                                non_doubles_found = true
-                                break
-                            end
-                        end
-                        @test non_doubles_found  # Should find at least one non-double in 100 tries
-
-                        # Test doubles_only persists through gameplay (step! calls sample_chance!)
-                        g4 = initial_state(doubles_only=true, first_player=0)
-                        sample_chance!(g4)
-                        for _ in 1:10
-                            if game_terminated(g4)
-                                break
-                            end
-                            actions = legal_actions(g4)
-                            step!(g4, actions[1])
-                            if !game_terminated(g4)
-                                @test g4.dice[1] == g4.dice[2]  # Still doubles after step!
-                            end
-                        end
-
-                        # Test chance_outcomes returns all 21 in normal mode with standard probs
-                        g6 = initial_state(first_player=0)
-                        outcomes_normal = chance_outcomes(g6)
-                        @test length(outcomes_normal) == 21
-                        total_prob_normal = sum(p for (_, p) in outcomes_normal)
-                        @test total_prob_normal ≈ 1.0f0 atol=1e-5
-
-                        # Test apply_chance! rejects non-doubles in doubles_only mode
-                        g7 = initial_state(doubles_only=true, first_player=0)
-                        @test is_chance_node(g7)
-                        # Index 2 is (1,2) - a non-double
-                        @test_throws ErrorException apply_chance!(g7, 2)
-                        # Index 1 is (1,1) - a double, should work
-                        g8 = initial_state(doubles_only=true, first_player=0)
-                        @test_nowarn apply_chance!(g8, 1)
-                        @test g8.dice == [1, 1]
-
-                        # Test legal_actions at chance nodes respects doubles_only
-                        g9 = initial_state(doubles_only=true, first_player=0)
-                        @test is_chance_node(g9)
-                        chance_actions = legal_actions(g9)
-                        # In doubles_only mode, only 6 valid outcomes (indices 1,7,12,16,19,21)
-                        @test length(chance_actions) == 6
-                        @test all(idx -> idx in (1, 7, 12, 16, 19, 21), chance_actions)
-
-                        # Normal mode should still return 21 chance actions
-                        g10 = initial_state(first_player=0)
-                        @test length(legal_actions(g10)) == 21
-                    end
-
-                    @testset "Combined short_game and doubles_only" begin
-                        g = initial_state(short_game=true, doubles_only=true, first_player=0)
-                        @test g.doubles_only == true
-                        sample_chance!(g)
-
-                        # Verify short game position
-                        @test g[4] == 2
-                        @test g[16] == 3
-
-                        # Verify doubles
-                        @test g.dice[1] == g.dice[2]
-                    end
-
-                    @testset "Observation" begin
-                        g = initial_state()
-                        obs = vector_observation(g)
-                        @test length(obs) == 86
-                        @test all(obs .<= 1.0) && all(obs .>= -1.0)
-
-                        fast = BackgammonNet.observe_fast(g)
-                        @test length(fast) == 34
-
-                        # Semantic tests: observe_fast and observe_full share first 34 elements
-                        sample_chance!(g)
-                        obs_full = vector_observation(g)
-                        obs_fast = BackgammonNet.observe_fast(g)
-                        @test obs_full[1:34] ≈ obs_fast atol=1e-6
-
-                        # Test board encoding (indices 1-28)
-                        # Initial position: P0 has 2 on point 1, P0 view
-                        g2 = initial_state(first_player=0)
-                        sample_chance!(g2)
-                        obs2 = vector_observation(g2)
-                        @test obs2[1] ≈ 2.0f0 / 15.0f0 atol=1e-6  # P0 has 2 on point 1
-
-                        # Test dice encoding (indices 29-34)
-                        # Non-doubles: both die positions should be 0.25
-                        b = zeros(MVector{28, Int8})
-                        b[1] = 2
-                        g3 = make_test_game(board=b, dice=(3, 5), current_player=0)
-                        obs3 = BackgammonNet.observe_fast(g3)
-                        @test obs3[28 + 3] ≈ 0.25f0 atol=1e-6  # Die 1 = 3
-                        @test obs3[28 + 5] ≈ 0.25f0 atol=1e-6  # Die 2 = 5
-                        @test obs3[28 + 1] == 0.0f0  # Other dice positions zero
-                        @test obs3[28 + 2] == 0.0f0
-                        @test obs3[28 + 4] == 0.0f0
-                        @test obs3[28 + 6] == 0.0f0
-
-                        # Test doubles encoding
-                        g4 = make_test_game(board=b, dice=(4, 4), remaining=2, current_player=0)
-                        obs4 = BackgammonNet.observe_fast(g4)
-                        @test obs4[28 + 4] ≈ 1.0f0 atol=1e-6  # remaining=2 -> 4 dice -> 4/4 = 1.0
-
-                        g5 = make_test_game(board=b, dice=(4, 4), remaining=1, current_player=0)
-                        obs5 = BackgammonNet.observe_fast(g5)
-                        @test obs5[28 + 4] ≈ 0.5f0 atol=1e-6  # remaining=1 -> 2 dice -> 2/4 = 0.5
-
-                        # Test blot detection (indices 39-62 for full observation)
-                        b_blot = zeros(MVector{28, Int8})
-                        b_blot[5] = 1   # My blot at point 5
-                        b_blot[10] = -1  # Opponent blot at point 10
-                        g6 = make_test_game(board=b_blot, dice=(1, 2), current_player=0)
-                        obs6 = vector_observation(g6)
-                        @test obs6[38 + 5] == 1.0f0   # My blot at index 38+5=43
-                        @test obs6[38 + 10] == -1.0f0  # Opp blot at index 38+10=48
-
-                        # Test block detection (indices 63-86 for full observation)
-                        b_block = zeros(MVector{28, Int8})
-                        b_block[3] = 3   # My block (3 checkers) at point 3
-                        b_block[7] = -2  # Opponent block at point 7
-                        g7 = make_test_game(board=b_block, dice=(1, 2), current_player=0)
-                        obs7 = vector_observation(g7)
-                        @test obs7[62 + 3] == 1.0f0   # My block at index 62+3=65
-                        @test obs7[62 + 7] == -1.0f0  # Opp block at index 62+7=69
-
-                        # Test race detection (index 35)
-                        # Race: no contact, my rearmost checker ahead of opponent's foremost
-                        b_race = zeros(MVector{28, Int8})
-                        b_race[20] = 5  # My checkers in home
-                        b_race[5] = -5   # Opponent checkers far away
-                        g8 = make_test_game(board=b_race, dice=(1, 2), current_player=0)
-                        obs8 = vector_observation(g8)
-                        @test obs8[35] == 1.0f0  # Is a race (min_my=20 > max_opp=5)
-
-                        # Not a race: contact exists
-                        b_contact = zeros(MVector{28, Int8})
-                        b_contact[10] = 1  # My checker
-                        b_contact[15] = -1  # Opponent ahead of me
-                        g9 = make_test_game(board=b_contact, dice=(1, 2), current_player=0)
-                        obs9 = vector_observation(g9)
-                        @test obs9[35] == 0.0f0  # Not a race (min_my=10 < max_opp=15)
-
-                        # Test bearing off capability (indices 36, 37)
-                        b_bearoff = zeros(MVector{28, Int8})
-                        b_bearoff[20] = 5  # My checkers all in home (19-24)
-                        b_bearoff[2] = -5   # Opp checkers all in their home (1-6)
-                        g10 = make_test_game(board=b_bearoff, dice=(1, 2), current_player=0)
-                        obs10 = vector_observation(g10)
-                        @test obs10[36] == 1.0f0  # can_bear_my = true
-                        @test obs10[37] == 1.0f0  # can_bear_opp = true
-
-                        # Cannot bear off: checker outside home
-                        b_no_bearoff = zeros(MVector{28, Int8})
-                        b_no_bearoff[10] = 1  # My checker outside home
-                        b_no_bearoff[20] = 4  # Rest in home
-                        g11 = make_test_game(board=b_no_bearoff, dice=(1, 2), current_player=0)
-                        obs11 = vector_observation(g11)
-                        @test obs11[36] == 0.0f0  # can_bear_my = false
-                    end
-                
-                    @testset "Scoring & Perspective" begin
-                        # P0 Win - Single
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P0 Off
-                        b[24] = 1  # P0 last checker
-                        b[1] = -1  # P1 has some off
-                        b[28] = -1 # P1 has 1 off
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.terminated
-                        @test g.reward == 1.0f0
-                        @test winner(g) == 0
-
-                        # P1 Win - Gammon
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # My Off (P1 Off)
-                        b[24] = 1  # My checker at Canon 24 (Physical 1)
-                        b[7] = -1  # Opp (P0) at Canon 7 (Physical 18) - outside P1 home
-
-                        g = make_test_game(board=b, dice=(2, 1), current_player=1)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-
-                        @test g.terminated
-                        @test g.reward == -2.0f0
-                        @test winner(g) == 1
-
-                        # P0 Win - Backgammon (via bar)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # My Off (P0 Off)
-                        b[24] = 1  # My checker at Canon 24 (Physical 24)
-                        b[26] = -1 # Opp (P1) on Bar
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == 3.0f0
-
-                        # P0 Win - Backgammon (via home board)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14
-                        b[24] = 1
-                        b[19] = -1 # Opp (P1) in P0's home (Physical 19)
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == 3.0f0
-
-                        # P1 Win - Backgammon (via home board)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # My Off (P1 Off)
-                        b[24] = 1  # My checker at Canon 24 (Physical 1)
-                        b[20] = -1 # Opp (P0) in My home (Canon 20 = Physical 5)
-
-                        g = make_test_game(board=b, dice=(2, 1), current_player=1)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == -3.0f0
-
-                        # P1 Win - Backgammon (P0 on bar)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P1 Off
-                        b[24] = 1  # P1 at Canon 24 (Physical 1)
-                        b[26] = -1 # P0 on bar
-                        g = make_test_game(board=b, dice=(2, 1), current_player=1)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == -3.0f0
-
-                        # P1 Win - Backgammon (P0 at physical 1, edge of home)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P1 Off
-                        b[23] = 1  # P1 at Canon 23 (Physical 2)
-                        b[24] = -1 # P0 at Canon 24 (Physical 1) - edge of P1's home (blot)
-                        g = make_test_game(board=b, dice=(2, 1), current_player=1)
-                        # Must use both dice: 23->24 (die1=1, hits P0), then 24->off (die2=2)
-                        # P0 ends up on bar, still backgammon
-                        apply_action!(g, BackgammonNet.encode_action(24, 23))
-                        @test g.reward == -3.0f0
-
-                        # P1 Win - Backgammon (P0 at physical 6, other edge of home)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P1 Off
-                        b[20] = 1  # P1 at Canon 20 (Physical 5)
-                        b[19] = -1 # P0 at Canon 19 (Physical 6) - other edge of P1's home
-                        g = make_test_game(board=b, dice=(5, 1), current_player=1)
-                        # Must use both dice: 20->21 (die2=1), then 21->off (die1=5)
-                        apply_action!(g, BackgammonNet.encode_action(21, 20))
-                        @test g.reward == -3.0f0
-
-                        # P1 Win - Single (P0 on bar but has 1 off - not backgammon)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P1 Off
-                        b[24] = 1  # P1 at Canon 24 (Physical 1)
-                        b[26] = -1 # P0 on bar
-                        b[28] = -1 # P0 has 1 off - this prevents gammon/backgammon
-                        g = make_test_game(board=b, dice=(2, 1), current_player=1)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == -1.0f0
-
-                        # P1 Win - Single (P0 at physical 1 but has 1 off)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P1 Off
-                        b[23] = 1  # P1 at Canon 23 (Physical 2)
-                        b[24] = -1 # P0 at Canon 24 (Physical 1) - blot
-                        b[28] = -1 # P0 has 1 off
-                        g = make_test_game(board=b, dice=(2, 1), current_player=1)
-                        # Must use both dice: 23->24 (die2=1, hits P0), then 24->off (die1=2)
-                        apply_action!(g, BackgammonNet.encode_action(24, 23))
-                        @test g.reward == -1.0f0
-
-                        # P1 Win - Single (P0 at physical 6 but has 1 off)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P1 Off
-                        b[20] = 1  # P1 at Canon 20 (Physical 5)
-                        b[19] = -1 # P0 at Canon 19 (Physical 6)
-                        b[28] = -1 # P0 has 1 off
-                        g = make_test_game(board=b, dice=(5, 1), current_player=1)
-                        # Must use both dice: 20->21 (die2=1), then 21->off (die1=5)
-                        apply_action!(g, BackgammonNet.encode_action(21, 20))
-                        @test g.reward == -1.0f0
-
-                        # --- P0 Win additional tests ---
-
-                        # P0 Win - Gammon (P1 has 0 off, outside P0's home, not on bar)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P0 Off
-                        b[24] = 1  # P0 last checker
-                        b[1] = -1  # P1 at physical 1 (outside P0's home 19-24)
-                        # b[28] = 0 implicitly (P1 has 0 off)
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == 2.0f0
-
-                        # P0 Win - Backgammon (P1 at physical 24, edge of home)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P0 Off
-                        b[23] = 1  # P0 at point 23
-                        b[24] = -1 # P1 at physical 24 - edge of P0's home (blot)
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        # Must use both dice: 23->24 (die2=1, hits P1), then 24->off (die1=2)
-                        apply_action!(g, BackgammonNet.encode_action(24, 23))
-                        @test g.reward == 3.0f0
-
-                        # P0 Win - Single (P1 on bar but has 1 off)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P0 Off
-                        b[24] = 1  # P0 last checker
-                        b[26] = -1 # P1 on bar
-                        b[28] = -1 # P1 has 1 off - prevents gammon/backgammon
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == 1.0f0
-
-                        # P0 Win - Single (P1 at physical 19 but has 1 off)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P0 Off
-                        b[24] = 1  # P0 last checker
-                        b[19] = -1 # P1 at physical 19 (edge of P0's home)
-                        b[28] = -1 # P1 has 1 off
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == 1.0f0
-
-                        # P0 Win - Single (P1 at physical 24 but has 1 off)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P0 Off
-                        b[23] = 1  # P0 at point 23
-                        b[24] = -1 # P1 at physical 24 (other edge of P0's home) - blot
-                        b[28] = -1 # P1 has 1 off
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        # Must use both dice: 23->24 (die2=1, hits P1), then 24->off (die1=2)
-                        apply_action!(g, BackgammonNet.encode_action(24, 23))
-                        @test g.reward == 1.0f0
-
-                        # --- Boundary tests (verify home board ranges are correct) ---
-
-                        # P0 Win - Gammon (P1 at physical 18, just OUTSIDE home 19-24)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P0 Off
-                        b[24] = 1  # P0 last checker
-                        b[18] = -1 # P1 at physical 18 - just outside P0's home
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == 2.0f0  # Gammon, NOT backgammon
-
-                        # P1 Win - Gammon (P0 at physical 7, just OUTSIDE home 1-6)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P1 Off
-                        b[24] = 1  # P1 at Canon 24 (Physical 1)
-                        b[18] = -1 # P0 at Canon 18 (Physical 7) - just outside P1's home
-                        g = make_test_game(board=b, dice=(2, 1), current_player=1)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == -2.0f0  # Gammon, NOT backgammon
-
-                        # --- Edge cases: multiple checkers and combined positions ---
-
-                        # P0 Win - Backgammon (P1 on bar AND in home simultaneously)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P0 Off
-                        b[24] = 1  # P0 last checker
-                        b[26] = -1 # P1 on bar
-                        b[19] = -1 # P1 also in P0's home
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == 3.0f0
-
-                        # P0 Win - Backgammon (multiple P1 checkers on bar)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P0 Off
-                        b[24] = 1  # P0 last checker
-                        b[26] = -3 # P1 has 3 checkers on bar
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == 3.0f0
-
-                        # P0 Win - Backgammon (multiple P1 checkers in home)
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P0 Off
-                        b[24] = 1  # P0 last checker
-                        b[19] = -2 # P1 has 2 checkers at physical 19
-                        b[22] = -3 # P1 has 3 checkers at physical 22
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.reward == 3.0f0
-                    end
-                
-                    @testset "Forced Pass" begin
-                        # All moves blocked
-                        b = zeros(MVector{28, Int8})
-                        b[1] = 1
-                        for i in 2:7; b[i] = -2; end # Block all exits for 1, 2, 3, 4, 5, 6
-                        g = make_test_game(board=b, dice=(1, 2), current_player=0)
-                        
-                        actions = legal_actions(g)
-                        @test length(actions) == 1
-                        l1, l2 = BackgammonNet.decode_action(actions[1])
-                        @test l1 == PASS && l2 == PASS
-                    end
-                
-                    @testset "Doubles Full Usage" begin
-                        b = zeros(MVector{28, Int8})
-                        b[1] = 4
-                        # Can move 1->3, 3->5, 5->7, 7->9
-                        g = make_test_game(board=b, dice=(2, 2), current_player=0, remaining=2)
-
-                        actions = legal_actions(g)
-                        # Each action in doubles represents 2 of 4 moves.
-                        # So we need to apply two actions to finish the turn.
-                        act = BackgammonNet.encode_action(1, 1) # moves two checkers to 3
-                        apply_action!(g, act)
-                        @test g.remaining_actions == 1
-                        @test !is_chance_node(g)
-
-                        act2 = BackgammonNet.encode_action(3, 3) # moves them to 5
-                        apply_action!(g, act2)
-                        @test is_chance_node(g) # Turn finished
-                    end
-
-                    @testset "Error Handling" begin
-                        # apply_action! after termination is a no-op
-                        b = zeros(MVector{28, Int8})
-                        b[27] = 14 # P0 Off
-                        b[24] = 1  # P0 last checker
-                        b[28] = -1 # P1 has 1 off
-                        g = make_test_game(board=b, dice=(2, 1), current_player=0)
-                        apply_action!(g, BackgammonNet.encode_action(24, PASS))
-                        @test g.terminated == true
-                        history_len = length(g.history)
-                        # Calling apply_action! again should be a no-op (no error, just returns)
-                        apply_action!(g, BackgammonNet.encode_action(1, 2))
-                        @test g.terminated == true  # Still terminated
-                        @test length(g.history) == history_len  # History unchanged
-
-                        # apply_action! on chance node throws error
-                        g = initial_state(first_player=0)
-                        @test is_chance_node(g)
-                        @test_throws ErrorException apply_action!(g, 1)
-
-                        # is_action_valid returns false at chance node (dice not rolled)
-                        g = initial_state(first_player=0)
-                        @test is_chance_node(g)
-                        @test !is_action_valid(g, 1)  # Any action should be invalid
-                        @test !is_action_valid(g, BackgammonNet.encode_action(PASS, PASS))  # Even PASS|PASS
-
-                        # apply_chance! on non-chance node throws error
-                        g = initial_state(first_player=0)
-                        sample_chance!(g)
-                        @test !is_chance_node(g)
-                        @test_throws ErrorException apply_chance!(g, 1)
-
-                        # Invalid action: empty source
-                        b = zeros(MVector{28, Int8})
-                        b[1] = 1  # Single checker on point 1
-                        g = make_test_game(board=b, dice=(1, 2), current_player=0)
-                        invalid_action = BackgammonNet.encode_action(10, 10)  # No pieces at 10
-                        @test !is_action_valid(g, invalid_action)
-                        @test_throws ErrorException apply_action!(g, invalid_action)
-
-                        # Invalid action: blocked target
-                        b = zeros(MVector{28, Int8})
-                        b[1] = 1   # Checker at point 1
-                        b[2] = -2  # Blocked at point 2 (2+ opponent checkers)
-                        b[3] = -2  # Blocked at point 3
-                        g = make_test_game(board=b, dice=(1, 2), current_player=0)
-                        invalid_action = BackgammonNet.encode_action(1, PASS)  # 1->2 blocked, 1->3 blocked
-                        @test !is_action_valid(g, invalid_action)
-                        @test_throws ErrorException apply_action!(g, invalid_action)
-
-                        # Invalid action: bar priority violation
-                        b = zeros(MVector{28, Int8})
-                        b[25] = 1  # On bar
-                        b[10] = 1  # Also have checker at point 10
-                        g = make_test_game(board=b, dice=(1, 2), current_player=0)
-                        invalid_action = BackgammonNet.encode_action(10, PASS)  # Can't move 10, must enter from bar
-                        @test !is_action_valid(g, invalid_action)
-                        @test_throws ErrorException apply_action!(g, invalid_action)
-
-                        # Invalid action: both PASS when moves are possible
-                        b = zeros(MVector{28, Int8})
-                        b[1] = 1  # Checker at point 1, can move
-                        g = make_test_game(board=b, dice=(1, 2), current_player=0)
-                        invalid_action = BackgammonNet.encode_action(PASS, PASS)
-                        @test !is_action_valid(g, invalid_action)
-                        @test_throws ErrorException apply_action!(g, invalid_action)
-
-                        # Invalid action: using one die when both can be used
-                        b = zeros(MVector{28, Int8})
-                        b[1] = 2  # Two checkers at point 1
-                        g = make_test_game(board=b, dice=(1, 2), current_player=0)
-                        # Can use both: 1->2 (d1), 1->3 (d2) or 1->2, 2->4, etc.
-                        invalid_action = BackgammonNet.encode_action(1, PASS)  # Only uses d1
-                        @test !is_action_valid(g, invalid_action)
-                        @test_throws ErrorException apply_action!(g, invalid_action)
-
-                        # Invalid action: using lower die when higher available (non-doubles)
-                        b = zeros(MVector{28, Int8})
-                        b[1] = 1  # Single checker
-                        b[2] = -2 # Block at 2 (blocks d1=1)
-                        b[3] = -2 # Block at 3 (blocks d2=2)
-                        b[7] = -2 # Block at 7 (blocks d1+d2 combo via 1->2->... or 1->3->...)
-                        g = make_test_game(board=b, dice=(5, 6), current_player=0)
-                        # Only one die usable at a time, must use higher (6)
-                        invalid_action = BackgammonNet.encode_action(1, PASS)  # Uses d1=5, not d2=6
-                        @test !is_action_valid(g, invalid_action)
-                        @test_throws ErrorException apply_action!(g, invalid_action)
-
-                        # Invalid action: bearing off when pieces outside home board
-                        b = zeros(MVector{28, Int8})
-                        b[24] = 1  # Checker in home board (point 24)
-                        b[10] = 1  # Checker outside home board (point 10)
-                        g = make_test_game(board=b, dice=(1, 2), current_player=0)
-                        # Can't bear off from 24, must move pieces first
-                        invalid_action = BackgammonNet.encode_action(24, 10)
-                        @test !is_action_valid(g, invalid_action)
-                        @test_throws ErrorException apply_action!(g, invalid_action)
-
-                        # Valid action should pass is_action_valid
-                        b = zeros(MVector{28, Int8})
-                        b[1] = 2  # Two checkers
-                        g = make_test_game(board=b, dice=(1, 2), current_player=0)
-                        valid_action = BackgammonNet.encode_action(1, 1)  # 1->2 (d1), 1->3 (d2)
-                        @test is_action_valid(g, valid_action)
-
-                        # winner() edge cases
-                        # Non-terminated game returns nothing
-                        g = initial_state(first_player=0)
-                        @test winner(g) === nothing
-
-                        # Terminated game with reward==0 (invalid state) returns nothing
-                        # This can only happen via direct mutation, not normal gameplay
-                        g = initial_state(first_player=0)
-                        g.terminated = true
-                        g.reward = 0.0f0
-                        @test winner(g) === nothing  # Should NOT return 1
-                    end
-
-                    @testset "Sanity Check Corruption Detection" begin
-                        # These tests verify that sanity_check_bitboard catches corrupted states.
-                        # In normal gameplay, these corruptions should never occur, but the checks
-                        # help catch bugs during development.
-                        # TODO: Remove for large-scale training (set ENABLE_SANITY_CHECKS = false)
-
-                        # Test 1: Both players on same point (impossible in backgammon)
-                        p0_corrupt = UInt128(0)
-                        p1_corrupt = UInt128(0)
-                        # Put P0 checker at physical point 5
-                        p0_corrupt = BackgammonNet.incr_count(p0_corrupt, 5)
-                        # Put P1 checker at same physical point 5 (corruption!)
-                        p1_corrupt = BackgammonNet.incr_count(p1_corrupt, 5)
-                        @test_throws ErrorException BackgammonNet.sanity_check_bitboard(p0_corrupt, p1_corrupt)
-
-                        # Test 2: Overflow - more than 15 total checkers for a player
-                        p0_overflow = UInt128(0)
-                        p1_normal = UInt128(0)
-                        # Add 16 checkers to P0 across different points (simulating overflow corruption)
-                        for i in 1:16
-                            p0_overflow = BackgammonNet.incr_count(p0_overflow, i)
-                        end
-                        @test_throws ErrorException BackgammonNet.sanity_check_bitboard(p0_overflow, p1_normal)
-
-                        # Test 3: Normal state should NOT throw
-                        g = initial_state(first_player=0)
-                        @test_nowarn BackgammonNet.sanity_check_game(g)
-
-                        # Test 4: State after valid moves should NOT throw
-                        sample_chance!(g)
-                        actions = legal_actions(g)
-                        if !isempty(actions)
-                            step!(g, actions[1])
-                            @test_nowarn BackgammonNet.sanity_check_game(g)
-                        end
-                    end
-
-                    @testset "legal_actions and is_action_valid Agreement" begin
-                        # Verify that is_action_valid agrees with legal_actions membership
-                        # This catches drift between the two implementations of maximize-dice rules
-                        Random.seed!(12345)
-
-                        for _ in 1:50  # Test 50 random positions
-                            g = initial_state()
-                            sample_chance!(g)
-
-                            # Play a few random moves to get varied positions
-                            for _ in 1:rand(0:20)
-                                if game_terminated(g)
-                                    break
-                                end
-                                acts = legal_actions(g)
-                                if isempty(acts)
-                                    break
-                                end
-                                step!(g, rand(acts))
-                            end
-
-                            if game_terminated(g) || is_chance_node(g)
-                                continue
-                            end
-
-                            # Get legal actions
-                            valid_actions = Set(legal_actions(g))
-
-                            # Verify is_action_valid agrees for all possible actions (1-676)
-                            for action in 1:676
-                                expected = action in valid_actions
-                                actual = is_action_valid(g, action)
-                                @test actual == expected
-                            end
-                        end
-                    end
 
+    @testset "Full Random Game" begin
+        # Use seeded RNG for reproducibility
+        rng = Random.MersenneTwister(42)
+        g = initial_state(first_player=0)
+        sample_chance!(g, rng) # Start with rolled dice
+
+        step_count = 0
+        max_steps = 10000
+
+        while !game_terminated(g) && step_count < max_steps
+            actions = legal_actions(g)
+            if isempty(actions)
+                break
+            end
+
+            a = actions[rand(rng, 1:length(actions))]
+            step!(g, a, rng)
+
+            step_count += 1
+        end
+
+        @test game_terminated(g)
+        @test step_count < max_steps
+        @test g.reward != 0.0f0
+    end
+
+    @testset "Reset" begin
+        g = initial_state()
+        sample_chance!(g)
+        apply_action!(g, legal_actions(g)[1])
+        @test length(g.history) > 0
+
+        reset!(g)
+        @test length(g.history) == 0
+        @test is_chance_node(g)
+    end
+
+    @testset "First Player Selection" begin
+        # Test initial_state with explicit first_player
+        g0 = initial_state(first_player=0)
+        @test g0.current_player == 0
+
+        g1 = initial_state(first_player=1)
+        @test g1.current_player == 1
+
+        # Test reset! with explicit first_player
+        reset!(g0, first_player=1)
+        @test g0.current_player == 1
+
+        reset!(g1, first_player=0)
+        @test g1.current_player == 0
+
+        # Test default (random) still works
+        g = initial_state()
+        @test g.current_player in [0, 1]
+
+        # Test invalid first_player values are rejected
+        @test_throws ArgumentError initial_state(first_player=2)
+        @test_throws ArgumentError initial_state(first_player=-1)
+        @test_throws ArgumentError initial_state(first_player=100)
+
+        g = initial_state(first_player=0)
+        @test_throws ArgumentError reset!(g, first_player=2)
+        @test_throws ArgumentError reset!(g, first_player=-1)
+    end
+
+    @testset "Short Game Mode" begin
+        # Test initial_state with short_game
+        g = initial_state(short_game=true, first_player=0)
+        @test is_chance_node(g)
+
+        # Verify short game board position for P0 (from canonical perspective)
+        # P0 at indices: 4(2), 12(1), 15(2), 16(3), 18(3), 21(3), 22(1)
+        sample_chance!(g)
+        @test g[4] == 2   # P0 has 2 on point 4
+        @test g[12] == 1  # P0 has 1 on point 12
+        @test g[15] == 2  # P0 has 2 on point 15
+        @test g[16] == 3  # P0 has 3 on point 16
+        @test g[18] == 3  # P0 has 3 on point 18
+        @test g[21] == 3  # P0 has 3 on point 21
+        @test g[22] == 1  # P0 has 1 on point 22
+
+        # Verify P1 positions (negative from P0 perspective)
+        # P1 at indices: 1(1), 2(3), 5(3), 7(3), 8(2), 11(1), 19(2)
+        @test g[1] == -1  # P1 has 1 on point 1
+        @test g[2] == -3  # P1 has 3 on point 2
+        @test g[5] == -3  # P1 has 3 on point 5
+        @test g[7] == -3  # P1 has 3 on point 7
+        @test g[8] == -2  # P1 has 2 on point 8
+        @test g[11] == -1 # P1 has 1 on point 11
+        @test g[19] == -2 # P1 has 2 on point 19
+
+        # Test reset! with short_game
+        g2 = initial_state(first_player=0)
+        reset!(g2, short_game=true, first_player=0)
+        sample_chance!(g2)
+        @test g2[4] == 2   # Verify short game position after reset
+        @test g2[16] == 3
+    end
+
+    @testset "Doubles Only Mode" begin
+        # Test initial_state with doubles_only
+        g = initial_state(doubles_only=true, first_player=0)
+        @test g.doubles_only == true
+        @test is_chance_node(g)
+
+        # Sample chance and verify we get doubles
+        sample_chance!(g)
+        @test g.dice[1] == g.dice[2]  # Must be doubles
+        @test g.remaining_actions == 2  # Doubles give 2 actions
+
+        # chance_outcomes should keep 21 entries with zeros for non-doubles
+        reset!(g, doubles_only=true, first_player=0)
+        outcomes = chance_outcomes(g)
+        @test length(outcomes) == 21
+        for (idx, prob) in outcomes
+            if idx in (1, 7, 12, 16, 19, 21)
+                @test prob ≈ 1/6 atol=1e-6
+            else
+                @test prob == 0.0f0
+            end
+        end
+
+        # Test multiple rolls are all doubles
+        for _ in 1:20
+            reset!(g, doubles_only=true, first_player=0)
+            sample_chance!(g)
+            @test g.dice[1] == g.dice[2]
+            @test g.dice[1] in 1:6
+        end
+
+        # Test reset! preserves doubles_only setting when specified
+        g2 = initial_state(first_player=0)
+        @test g2.doubles_only == false
+        reset!(g2, doubles_only=true, first_player=0)
+        @test g2.doubles_only == true
+        sample_chance!(g2)
+        @test g2.dice[1] == g2.dice[2]
+
+        # Test that regular game can still roll non-doubles (seeded for determinism)
+        rng = Random.MersenneTwister(12345)
+        g3 = initial_state(first_player=0)
+        non_doubles_found = false
+        for _ in 1:100
+            reset!(g3, first_player=0)
+            sample_chance!(g3, rng)
+            if g3.dice[1] != g3.dice[2]
+                non_doubles_found = true
+                break
+            end
+        end
+        @test non_doubles_found  # Should find at least one non-double in 100 tries
+
+        # Test doubles_only persists through gameplay (step! calls sample_chance!)
+        g4 = initial_state(doubles_only=true, first_player=0)
+        sample_chance!(g4)
+        for _ in 1:10
+            if game_terminated(g4)
+                break
+            end
+            actions = legal_actions(g4)
+            step!(g4, actions[1])
+            if !game_terminated(g4)
+                @test g4.dice[1] == g4.dice[2]  # Still doubles after step!
+            end
+        end
+
+        # Test chance_outcomes returns all 21 in normal mode with standard probs
+        g6 = initial_state(first_player=0)
+        outcomes_normal = chance_outcomes(g6)
+        @test length(outcomes_normal) == 21
+        total_prob_normal = sum(p for (_, p) in outcomes_normal)
+        @test total_prob_normal ≈ 1.0f0 atol=1e-5
+
+        # Test apply_chance! rejects non-doubles in doubles_only mode
+        g7 = initial_state(doubles_only=true, first_player=0)
+        @test is_chance_node(g7)
+        # Index 2 is (1,2) - a non-double
+        @test_throws ErrorException apply_chance!(g7, 2)
+        # Index 1 is (1,1) - a double, should work
+        g8 = initial_state(doubles_only=true, first_player=0)
+        @test_nowarn apply_chance!(g8, 1)
+        @test g8.dice == [1, 1]
+
+        # Test legal_actions at chance nodes respects doubles_only
+        g9 = initial_state(doubles_only=true, first_player=0)
+        @test is_chance_node(g9)
+        chance_actions = legal_actions(g9)
+        # In doubles_only mode, only 6 valid outcomes (indices 1,7,12,16,19,21)
+        @test length(chance_actions) == 6
+        @test all(idx -> idx in (1, 7, 12, 16, 19, 21), chance_actions)
+
+        # Normal mode should still return 21 chance actions
+        g10 = initial_state(first_player=0)
+        @test length(legal_actions(g10)) == 21
+    end
+
+    @testset "Combined short_game and doubles_only" begin
+        g = initial_state(short_game=true, doubles_only=true, first_player=0)
+        @test g.doubles_only == true
+        sample_chance!(g)
+
+        # Verify short game position
+        @test g[4] == 2
+        @test g[16] == 3
+
+        # Verify doubles
+        @test g.dice[1] == g.dice[2]
+    end
+
+    @testset "Observation" begin
+        g = initial_state()
+        obs = vector_observation(g)
+        @test length(obs) == 86
+        @test all(obs .<= 1.0) && all(obs .>= -1.0)
+
+        fast = BackgammonNet.observe_fast(g)
+        @test length(fast) == 34
+
+        # Semantic tests: observe_fast and observe_full share first 34 elements
+        sample_chance!(g)
+        obs_full = vector_observation(g)
+        obs_fast = BackgammonNet.observe_fast(g)
+        @test obs_full[1:34] ≈ obs_fast atol=1e-6
+
+        # Test board encoding (indices 1-28)
+        # Initial position: P0 has 2 on point 1, P0 view
+        g2 = initial_state(first_player=0)
+        sample_chance!(g2)
+        obs2 = vector_observation(g2)
+        @test obs2[1] ≈ 2.0f0 / 15.0f0 atol=1e-6  # P0 has 2 on point 1
+
+        # Test dice encoding (indices 29-34)
+        # Non-doubles: both die positions should be 0.25
+        b = zeros(MVector{28, Int8})
+        b[1] = 2
+        g3 = make_test_game(board=b, dice=(3, 5), current_player=0)
+        obs3 = BackgammonNet.observe_fast(g3)
+        @test obs3[28 + 3] ≈ 0.25f0 atol=1e-6  # Die 1 = 3
+        @test obs3[28 + 5] ≈ 0.25f0 atol=1e-6  # Die 2 = 5
+        @test obs3[28 + 1] == 0.0f0  # Other dice positions zero
+        @test obs3[28 + 2] == 0.0f0
+        @test obs3[28 + 4] == 0.0f0
+        @test obs3[28 + 6] == 0.0f0
+
+        # Test doubles encoding
+        g4 = make_test_game(board=b, dice=(4, 4), remaining=2, current_player=0)
+        obs4 = BackgammonNet.observe_fast(g4)
+        @test obs4[28 + 4] ≈ 1.0f0 atol=1e-6  # remaining=2 -> 4 dice -> 4/4 = 1.0
+
+        g5 = make_test_game(board=b, dice=(4, 4), remaining=1, current_player=0)
+        obs5 = BackgammonNet.observe_fast(g5)
+        @test obs5[28 + 4] ≈ 0.5f0 atol=1e-6  # remaining=1 -> 2 dice -> 2/4 = 0.5
+
+        # Test blot detection (indices 39-62 for full observation)
+        b_blot = zeros(MVector{28, Int8})
+        b_blot[5] = 1   # My blot at point 5
+        b_blot[10] = -1  # Opponent blot at point 10
+        g6 = make_test_game(board=b_blot, dice=(1, 2), current_player=0)
+        obs6 = vector_observation(g6)
+        @test obs6[38 + 5] == 1.0f0   # My blot at index 38+5=43
+        @test obs6[38 + 10] == -1.0f0  # Opp blot at index 38+10=48
+
+        # Test block detection (indices 63-86 for full observation)
+        b_block = zeros(MVector{28, Int8})
+        b_block[3] = 3   # My block (3 checkers) at point 3
+        b_block[7] = -2  # Opponent block at point 7
+        g7 = make_test_game(board=b_block, dice=(1, 2), current_player=0)
+        obs7 = vector_observation(g7)
+        @test obs7[62 + 3] == 1.0f0   # My block at index 62+3=65
+        @test obs7[62 + 7] == -1.0f0  # Opp block at index 62+7=69
+
+        # Test race detection (index 35)
+        # Race: no contact, my rearmost checker ahead of opponent's foremost
+        b_race = zeros(MVector{28, Int8})
+        b_race[20] = 5  # My checkers in home
+        b_race[5] = -5   # Opponent checkers far away
+        g8 = make_test_game(board=b_race, dice=(1, 2), current_player=0)
+        obs8 = vector_observation(g8)
+        @test obs8[35] == 1.0f0  # Is a race (min_my=20 > max_opp=5)
+
+        # Not a race: contact exists
+        b_contact = zeros(MVector{28, Int8})
+        b_contact[10] = 1  # My checker
+        b_contact[15] = -1  # Opponent ahead of me
+        g9 = make_test_game(board=b_contact, dice=(1, 2), current_player=0)
+        obs9 = vector_observation(g9)
+        @test obs9[35] == 0.0f0  # Not a race (min_my=10 < max_opp=15)
+
+        # Test bearing off capability (indices 36, 37)
+        b_bearoff = zeros(MVector{28, Int8})
+        b_bearoff[20] = 5  # My checkers all in home (19-24)
+        b_bearoff[2] = -5   # Opp checkers all in their home (1-6)
+        g10 = make_test_game(board=b_bearoff, dice=(1, 2), current_player=0)
+        obs10 = vector_observation(g10)
+        @test obs10[36] == 1.0f0  # can_bear_my = true
+        @test obs10[37] == 1.0f0  # can_bear_opp = true
+
+        # Cannot bear off: checker outside home
+        b_no_bearoff = zeros(MVector{28, Int8})
+        b_no_bearoff[10] = 1  # My checker outside home
+        b_no_bearoff[20] = 4  # Rest in home
+        g11 = make_test_game(board=b_no_bearoff, dice=(1, 2), current_player=0)
+        obs11 = vector_observation(g11)
+        @test obs11[36] == 0.0f0  # can_bear_my = false
+    end
+
+    @testset "In-Place Observation Functions" begin
+        g = initial_state(first_player=0)
+        sample_chance!(g)
+
+        # observe_fast! matches observe_fast
+        buf_fast = Vector{Float32}(undef, 34)
+        result_fast = BackgammonNet.observe_fast!(buf_fast, g)
+        @test result_fast === buf_fast  # Same object returned
+        @test buf_fast ≈ BackgammonNet.observe_fast(g) atol=1e-6
+
+        # observe_full! matches observe_full
+        buf_full = Vector{Float32}(undef, 86)
+        result_full = BackgammonNet.observe_full!(buf_full, g)
+        @test result_full === buf_full  # Same object returned
+        @test buf_full ≈ vector_observation(g) atol=1e-6
+
+        # Test with different game states through gameplay
+        for _ in 1:10
+            if game_terminated(g)
+                break
+            end
+            actions = legal_actions(g)
+            step!(g, actions[1])
+            if !game_terminated(g) && !is_chance_node(g)
+                BackgammonNet.observe_fast!(buf_fast, g)
+                @test buf_fast ≈ BackgammonNet.observe_fast(g) atol=1e-6
+                BackgammonNet.observe_full!(buf_full, g)
+                @test buf_full ≈ vector_observation(g) atol=1e-6
+            end
+        end
+
+        # Test that buffers are properly zeroed/overwritten
+        # Fill with non-zero values first
+        fill!(buf_fast, 999.0f0)
+        fill!(buf_full, 999.0f0)
+        g2 = initial_state(first_player=0)
+        sample_chance!(g2)
+        BackgammonNet.observe_fast!(buf_fast, g2)
+        BackgammonNet.observe_full!(buf_full, g2)
+        # Should match fresh observations (no leftover 999s)
+        @test buf_fast ≈ BackgammonNet.observe_fast(g2) atol=1e-6
+        @test buf_full ≈ vector_observation(g2) atol=1e-6
+    end
+
+    @testset "Scoring & Perspective" begin
+        # P0 Win - Single
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P0 Off
+        b[24] = 1  # P0 last checker
+        b[1] = -1  # P1 has some off
+        b[28] = -1 # P1 has 1 off
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.terminated
+        @test g.reward == 1.0f0
+        @test winner(g) == 0
+
+        # P1 Win - Gammon
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # My Off (P1 Off)
+        b[24] = 1  # My checker at Canon 24 (Physical 1)
+        b[7] = -1  # Opp (P0) at Canon 7 (Physical 18) - outside P1 home
+
+        g = make_test_game(board=b, dice=(2, 1), current_player=1)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+
+        @test g.terminated
+        @test g.reward == -2.0f0
+        @test winner(g) == 1
+
+        # P0 Win - Backgammon (via bar)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # My Off (P0 Off)
+        b[24] = 1  # My checker at Canon 24 (Physical 24)
+        b[26] = -1 # Opp (P1) on Bar
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == 3.0f0
+
+        # P0 Win - Backgammon (via home board)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14
+        b[24] = 1
+        b[19] = -1 # Opp (P1) in P0's home (Physical 19)
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == 3.0f0
+
+        # P1 Win - Backgammon (via home board)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # My Off (P1 Off)
+        b[24] = 1  # My checker at Canon 24 (Physical 1)
+        b[20] = -1 # Opp (P0) in My home (Canon 20 = Physical 5)
+
+        g = make_test_game(board=b, dice=(2, 1), current_player=1)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == -3.0f0
+
+        # P1 Win - Backgammon (P0 on bar)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P1 Off
+        b[24] = 1  # P1 at Canon 24 (Physical 1)
+        b[26] = -1 # P0 on bar
+        g = make_test_game(board=b, dice=(2, 1), current_player=1)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == -3.0f0
+
+        # P1 Win - Backgammon (P0 at physical 1, edge of home)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P1 Off
+        b[23] = 1  # P1 at Canon 23 (Physical 2)
+        b[24] = -1 # P0 at Canon 24 (Physical 1) - edge of P1's home (blot)
+        g = make_test_game(board=b, dice=(2, 1), current_player=1)
+        # Must use both dice: 23->24 (die1=1, hits P0), then 24->off (die2=2)
+        # P0 ends up on bar, still backgammon
+        apply_action!(g, BackgammonNet.encode_action(24, 23))
+        @test g.reward == -3.0f0
+
+        # P1 Win - Backgammon (P0 at physical 6, other edge of home)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P1 Off
+        b[20] = 1  # P1 at Canon 20 (Physical 5)
+        b[19] = -1 # P0 at Canon 19 (Physical 6) - other edge of P1's home
+        g = make_test_game(board=b, dice=(5, 1), current_player=1)
+        # Must use both dice: 20->21 (die2=1), then 21->off (die1=5)
+        apply_action!(g, BackgammonNet.encode_action(21, 20))
+        @test g.reward == -3.0f0
+
+        # P1 Win - Single (P0 on bar but has 1 off - not backgammon)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P1 Off
+        b[24] = 1  # P1 at Canon 24 (Physical 1)
+        b[26] = -1 # P0 on bar
+        b[28] = -1 # P0 has 1 off - this prevents gammon/backgammon
+        g = make_test_game(board=b, dice=(2, 1), current_player=1)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == -1.0f0
+
+        # P1 Win - Single (P0 at physical 1 but has 1 off)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P1 Off
+        b[23] = 1  # P1 at Canon 23 (Physical 2)
+        b[24] = -1 # P0 at Canon 24 (Physical 1) - blot
+        b[28] = -1 # P0 has 1 off
+        g = make_test_game(board=b, dice=(2, 1), current_player=1)
+        # Must use both dice: 23->24 (die2=1, hits P0), then 24->off (die1=2)
+        apply_action!(g, BackgammonNet.encode_action(24, 23))
+        @test g.reward == -1.0f0
+
+        # P1 Win - Single (P0 at physical 6 but has 1 off)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P1 Off
+        b[20] = 1  # P1 at Canon 20 (Physical 5)
+        b[19] = -1 # P0 at Canon 19 (Physical 6)
+        b[28] = -1 # P0 has 1 off
+        g = make_test_game(board=b, dice=(5, 1), current_player=1)
+        # Must use both dice: 20->21 (die2=1), then 21->off (die1=5)
+        apply_action!(g, BackgammonNet.encode_action(21, 20))
+        @test g.reward == -1.0f0
+
+        # --- P0 Win additional tests ---
+
+        # P0 Win - Gammon (P1 has 0 off, outside P0's home, not on bar)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P0 Off
+        b[24] = 1  # P0 last checker
+        b[1] = -1  # P1 at physical 1 (outside P0's home 19-24)
+        # b[28] = 0 implicitly (P1 has 0 off)
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == 2.0f0
+
+        # P0 Win - Backgammon (P1 at physical 24, edge of home)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P0 Off
+        b[23] = 1  # P0 at point 23
+        b[24] = -1 # P1 at physical 24 - edge of P0's home (blot)
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        # Must use both dice: 23->24 (die2=1, hits P1), then 24->off (die1=2)
+        apply_action!(g, BackgammonNet.encode_action(24, 23))
+        @test g.reward == 3.0f0
+
+        # P0 Win - Single (P1 on bar but has 1 off)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P0 Off
+        b[24] = 1  # P0 last checker
+        b[26] = -1 # P1 on bar
+        b[28] = -1 # P1 has 1 off - prevents gammon/backgammon
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == 1.0f0
+
+        # P0 Win - Single (P1 at physical 19 but has 1 off)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P0 Off
+        b[24] = 1  # P0 last checker
+        b[19] = -1 # P1 at physical 19 (edge of P0's home)
+        b[28] = -1 # P1 has 1 off
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == 1.0f0
+
+        # P0 Win - Single (P1 at physical 24 but has 1 off)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P0 Off
+        b[23] = 1  # P0 at point 23
+        b[24] = -1 # P1 at physical 24 (other edge of P0's home) - blot
+        b[28] = -1 # P1 has 1 off
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        # Must use both dice: 23->24 (die2=1, hits P1), then 24->off (die1=2)
+        apply_action!(g, BackgammonNet.encode_action(24, 23))
+        @test g.reward == 1.0f0
+
+        # --- Boundary tests (verify home board ranges are correct) ---
+
+        # P0 Win - Gammon (P1 at physical 18, just OUTSIDE home 19-24)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P0 Off
+        b[24] = 1  # P0 last checker
+        b[18] = -1 # P1 at physical 18 - just outside P0's home
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == 2.0f0  # Gammon, NOT backgammon
+
+        # P1 Win - Gammon (P0 at physical 7, just OUTSIDE home 1-6)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P1 Off
+        b[24] = 1  # P1 at Canon 24 (Physical 1)
+        b[18] = -1 # P0 at Canon 18 (Physical 7) - just outside P1's home
+        g = make_test_game(board=b, dice=(2, 1), current_player=1)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == -2.0f0  # Gammon, NOT backgammon
+
+        # --- Edge cases: multiple checkers and combined positions ---
+
+        # P0 Win - Backgammon (P1 on bar AND in home simultaneously)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P0 Off
+        b[24] = 1  # P0 last checker
+        b[26] = -1 # P1 on bar
+        b[19] = -1 # P1 also in P0's home
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == 3.0f0
+
+        # P0 Win - Backgammon (multiple P1 checkers on bar)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P0 Off
+        b[24] = 1  # P0 last checker
+        b[26] = -3 # P1 has 3 checkers on bar
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == 3.0f0
+
+        # P0 Win - Backgammon (multiple P1 checkers in home)
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P0 Off
+        b[24] = 1  # P0 last checker
+        b[19] = -2 # P1 has 2 checkers at physical 19
+        b[22] = -3 # P1 has 3 checkers at physical 22
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.reward == 3.0f0
+    end
+
+    @testset "Forced Pass" begin
+        # All moves blocked
+        b = zeros(MVector{28, Int8})
+        b[1] = 1
+        for i in 2:7; b[i] = -2; end # Block all exits for 1, 2, 3, 4, 5, 6
+        g = make_test_game(board=b, dice=(1, 2), current_player=0)
+
+        actions = legal_actions(g)
+        @test length(actions) == 1
+        l1, l2 = BackgammonNet.decode_action(actions[1])
+        @test l1 == PASS && l2 == PASS
+    end
+
+    @testset "Doubles Full Usage" begin
+        b = zeros(MVector{28, Int8})
+        b[1] = 4
+        # Can move 1->3, 3->5, 5->7, 7->9
+        g = make_test_game(board=b, dice=(2, 2), current_player=0, remaining=2)
+
+        actions = legal_actions(g)
+        # Each action in doubles represents 2 of 4 moves.
+        # So we need to apply two actions to finish the turn.
+        act = BackgammonNet.encode_action(1, 1) # moves two checkers to 3
+        apply_action!(g, act)
+        @test g.remaining_actions == 1
+        @test !is_chance_node(g)
+
+        act2 = BackgammonNet.encode_action(3, 3) # moves them to 5
+        apply_action!(g, act2)
+        @test is_chance_node(g) # Turn finished
+    end
+
+    @testset "Error Handling" begin
+        # apply_action! after termination is a no-op
+        b = zeros(MVector{28, Int8})
+        b[27] = 14 # P0 Off
+        b[24] = 1  # P0 last checker
+        b[28] = -1 # P1 has 1 off
+        g = make_test_game(board=b, dice=(2, 1), current_player=0)
+        apply_action!(g, BackgammonNet.encode_action(24, PASS))
+        @test g.terminated == true
+        history_len = length(g.history)
+        # Calling apply_action! again should be a no-op (no error, just returns)
+        apply_action!(g, BackgammonNet.encode_action(1, 2))
+        @test g.terminated == true  # Still terminated
+        @test length(g.history) == history_len  # History unchanged
+
+        # apply_action! on chance node throws error
+        g = initial_state(first_player=0)
+        @test is_chance_node(g)
+        @test_throws ErrorException apply_action!(g, 1)
+
+        # is_action_valid returns false at chance node (dice not rolled)
+        g = initial_state(first_player=0)
+        @test is_chance_node(g)
+        @test !is_action_valid(g, 1)  # Any action should be invalid
+        @test !is_action_valid(g, BackgammonNet.encode_action(PASS, PASS))  # Even PASS|PASS
+
+        # apply_chance! on non-chance node throws error
+        g = initial_state(first_player=0)
+        sample_chance!(g)
+        @test !is_chance_node(g)
+        @test_throws ErrorException apply_chance!(g, 1)
+
+        # Invalid action: empty source
+        b = zeros(MVector{28, Int8})
+        b[1] = 1  # Single checker on point 1
+        g = make_test_game(board=b, dice=(1, 2), current_player=0)
+        invalid_action = BackgammonNet.encode_action(10, 10)  # No pieces at 10
+        @test !is_action_valid(g, invalid_action)
+        @test_throws ErrorException apply_action!(g, invalid_action)
+
+        # Invalid action: blocked target
+        b = zeros(MVector{28, Int8})
+        b[1] = 1   # Checker at point 1
+        b[2] = -2  # Blocked at point 2 (2+ opponent checkers)
+        b[3] = -2  # Blocked at point 3
+        g = make_test_game(board=b, dice=(1, 2), current_player=0)
+        invalid_action = BackgammonNet.encode_action(1, PASS)  # 1->2 blocked, 1->3 blocked
+        @test !is_action_valid(g, invalid_action)
+        @test_throws ErrorException apply_action!(g, invalid_action)
+
+        # Invalid action: bar priority violation
+        b = zeros(MVector{28, Int8})
+        b[25] = 1  # On bar
+        b[10] = 1  # Also have checker at point 10
+        g = make_test_game(board=b, dice=(1, 2), current_player=0)
+        invalid_action = BackgammonNet.encode_action(10, PASS)  # Can't move 10, must enter from bar
+        @test !is_action_valid(g, invalid_action)
+        @test_throws ErrorException apply_action!(g, invalid_action)
+
+        # Invalid action: both PASS when moves are possible
+        b = zeros(MVector{28, Int8})
+        b[1] = 1  # Checker at point 1, can move
+        g = make_test_game(board=b, dice=(1, 2), current_player=0)
+        invalid_action = BackgammonNet.encode_action(PASS, PASS)
+        @test !is_action_valid(g, invalid_action)
+        @test_throws ErrorException apply_action!(g, invalid_action)
+
+        # Invalid action: using one die when both can be used
+        b = zeros(MVector{28, Int8})
+        b[1] = 2  # Two checkers at point 1
+        g = make_test_game(board=b, dice=(1, 2), current_player=0)
+        # Can use both: 1->2 (d1), 1->3 (d2) or 1->2, 2->4, etc.
+        invalid_action = BackgammonNet.encode_action(1, PASS)  # Only uses d1
+        @test !is_action_valid(g, invalid_action)
+        @test_throws ErrorException apply_action!(g, invalid_action)
+
+        # Invalid action: using lower die when higher available (non-doubles)
+        b = zeros(MVector{28, Int8})
+        b[1] = 1  # Single checker
+        b[2] = -2 # Block at 2 (blocks d1=1)
+        b[3] = -2 # Block at 3 (blocks d2=2)
+        b[7] = -2 # Block at 7 (blocks d1+d2 combo via 1->2->... or 1->3->...)
+        g = make_test_game(board=b, dice=(5, 6), current_player=0)
+        # Only one die usable at a time, must use higher (6)
+        invalid_action = BackgammonNet.encode_action(1, PASS)  # Uses d1=5, not d2=6
+        @test !is_action_valid(g, invalid_action)
+        @test_throws ErrorException apply_action!(g, invalid_action)
+
+        # Invalid action: bearing off when pieces outside home board
+        b = zeros(MVector{28, Int8})
+        b[24] = 1  # Checker in home board (point 24)
+        b[10] = 1  # Checker outside home board (point 10)
+        g = make_test_game(board=b, dice=(1, 2), current_player=0)
+        # Can't bear off from 24, must move pieces first
+        invalid_action = BackgammonNet.encode_action(24, 10)
+        @test !is_action_valid(g, invalid_action)
+        @test_throws ErrorException apply_action!(g, invalid_action)
+
+        # Valid action should pass is_action_valid
+        b = zeros(MVector{28, Int8})
+        b[1] = 2  # Two checkers
+        g = make_test_game(board=b, dice=(1, 2), current_player=0)
+        valid_action = BackgammonNet.encode_action(1, 1)  # 1->2 (d1), 1->3 (d2)
+        @test is_action_valid(g, valid_action)
+
+        # Invalid action triggering else branch in apply_action!
+        # This tests the case where loc1 is NOT legal first, so else branch is taken,
+        # but loc2 is also not legal - should throw error
+        b = zeros(MVector{28, Int8})
+        b[5] = 1   # Single checker at point 5
+        b[6] = -2  # Block at 6 (blocks d1=1: 5+1=6)
+        b[7] = -2  # Block at 7 (blocks d2=2: 5+2=7)
+        g = make_test_game(board=b, dice=(1, 2), current_player=0)
+        # Action (5, 5) means: use d1 from 5, use d2 from 5
+        # legal1 = is_move_legal(5, d1=1) = false (5->6 blocked)
+        # So else branch is taken
+        # is_move_legal(5, d2=2) = false (5->7 blocked)
+        # Should throw
+        invalid_action = BackgammonNet.encode_action(5, 5)
+        @test !is_action_valid(g, invalid_action)
+        @test_throws ErrorException apply_action!(g, invalid_action)
+
+        # Invalid action: loc1 blocked, loc2 works initially but loc1 still blocked after
+        # This exercises the second error path in the else branch
+        b = zeros(MVector{28, Int8})
+        b[5] = 1   # Single checker at point 5
+        b[6] = -2  # Block at 6 (blocks d1=1: 5+1=6)
+        # d2=2: 5->7 is open
+        # After moving 5->7, d1=1 would need to move from 7->8
+        # But we encoded action as (5, 5) which tries to use loc1=5 after moving loc2=5
+        # After 5->7, there's no checker at 5 anymore, so loc1=5 is illegal
+        g = make_test_game(board=b, dice=(1, 2), current_player=0)
+        invalid_action = BackgammonNet.encode_action(5, 5)  # Both try to move from 5
+        @test !is_action_valid(g, invalid_action)
+        @test_throws ErrorException apply_action!(g, invalid_action)
+
+        # winner() edge cases
+        # Non-terminated game returns nothing
+        g = initial_state(first_player=0)
+        @test winner(g) === nothing
+
+        # Terminated game with reward==0 (invalid state) returns nothing
+        # This can only happen via direct mutation, not normal gameplay
+        g = initial_state(first_player=0)
+        g.terminated = true
+        g.reward = 0.0f0
+        @test winner(g) === nothing  # Should NOT return 1
+    end
+
+    @testset "Sanity Check Corruption Detection" begin
+        # These tests verify that sanity_check_bitboard catches corrupted states.
+        # In normal gameplay, these corruptions should never occur, but the checks
+        # help catch bugs during development.
+        # NOTE: Controlled by ENABLE_SANITY_CHECKS in game.jl (set to false for large-scale training)
+
+        # Test 1: Both players on same point (impossible in backgammon)
+        p0_corrupt = UInt128(0)
+        p1_corrupt = UInt128(0)
+        # Put P0 checker at physical point 5
+        p0_corrupt = BackgammonNet.incr_count(p0_corrupt, 5)
+        # Put P1 checker at same physical point 5 (corruption!)
+        p1_corrupt = BackgammonNet.incr_count(p1_corrupt, 5)
+        @test_throws ErrorException BackgammonNet.sanity_check_bitboard(p0_corrupt, p1_corrupt)
+
+        # Test 2: Overflow - more than 15 total checkers for a player
+        p0_overflow = UInt128(0)
+        p1_normal = UInt128(0)
+        # Add 16 checkers to P0 across different points (simulating overflow corruption)
+        for i in 1:16
+            p0_overflow = BackgammonNet.incr_count(p0_overflow, i)
+        end
+        @test_throws ErrorException BackgammonNet.sanity_check_bitboard(p0_overflow, p1_normal)
+
+        # Test 3: Normal state should NOT throw
+        g = initial_state(first_player=0)
+        @test_nowarn BackgammonNet.sanity_check_game(g)
+
+        # Test 4: State after valid moves should NOT throw
+        sample_chance!(g)
+        actions = legal_actions(g)
+        if !isempty(actions)
+            step!(g, actions[1])
+            @test_nowarn BackgammonNet.sanity_check_game(g)
+        end
+    end
+
+    @testset "legal_actions and is_action_valid Agreement" begin
+        # Verify that is_action_valid agrees with legal_actions membership
+        # This catches drift between the two implementations of maximize-dice rules
+        Random.seed!(12345)
+
+        for _ in 1:50  # Test 50 random positions
+            g = initial_state()
+            sample_chance!(g)
+
+            # Play a few random moves to get varied positions
+            for _ in 1:rand(0:20)
+                if game_terminated(g)
+                    break
                 end
+                acts = legal_actions(g)
+                if isempty(acts)
+                    break
+                end
+                step!(g, rand(acts))
+            end
+
+            if game_terminated(g) || is_chance_node(g)
+                continue
+            end
+
+            # Get legal actions
+            valid_actions = Set(legal_actions(g))
+
+            # Verify is_action_valid agrees for all possible actions (1-676)
+            for action in 1:676
+                expected = action in valid_actions
+                actual = is_action_valid(g, action)
+                @test actual == expected
+            end
+        end
+    end
+
+    @testset "Base.show Method" begin
+        g = initial_state(first_player=0)
+        output = sprint(show, g)
+        @test occursin("BackgammonGame", output)
+        @test occursin("p=0", output)
+        @test occursin("dice", output)
+    end
+
+    @testset "action_string Function" begin
+        # Test basic encoding
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(1, 2)) == "1 | 2"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(PASS, PASS)) == "Pass | Pass"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(BAR, 5)) == "Bar | 5"
+        @test BackgammonNet.action_string(BackgammonNet.encode_action(10, PASS)) == "10 | Pass"
+    end
+
+    @testset "History Tracking" begin
+        g = initial_state(first_player=0)
+        @test isempty(g.history)
+
+        sample_chance!(g)
+        actions = legal_actions(g)
+        action1 = actions[1]
+        step!(g, action1)
+
+        @test length(g.history) >= 1
+        @test g.history[1] == action1
+
+        # Continue playing and verify history grows
+        if !game_terminated(g)
+            actions2 = legal_actions(g)
+            action2 = actions2[1]
+            step!(g, action2)
+            @test length(g.history) >= 2
+            @test g.history[2] == action2
+        end
+
+        # Reset clears history
+        reset!(g)
+        @test isempty(g.history)
+    end
+
+end
 
