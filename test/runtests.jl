@@ -856,6 +856,15 @@ end
                         # Test default (random) still works
                         g = initial_state()
                         @test g.current_player in [0, 1]
+
+                        # Test invalid first_player values are rejected
+                        @test_throws ArgumentError initial_state(first_player=2)
+                        @test_throws ArgumentError initial_state(first_player=-1)
+                        @test_throws ArgumentError initial_state(first_player=100)
+
+                        g = initial_state(first_player=0)
+                        @test_throws ArgumentError reset!(g, first_player=2)
+                        @test_throws ArgumentError reset!(g, first_player=-1)
                     end
 
                     @testset "Short Game Mode" begin

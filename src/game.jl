@@ -59,6 +59,31 @@ const INIT_P0_SHORT = (UInt128(2) << (4<<2)) | (UInt128(1) << (12<<2)) | (UInt12
 const INIT_P1_SHORT = (UInt128(1) << (1<<2)) | (UInt128(3) << (2<<2)) | (UInt128(3) << (5<<2)) |
                       (UInt128(3) << (7<<2)) | (UInt128(2) << (8<<2)) | (UInt128(1) << (11<<2)) | (UInt128(2) << (19<<2))
 
+# --- Buffer Size Constants ---
+const ACTIONS_BUFFER_SIZE = 200     # Max legal actions in any position
+const SOURCES_BUFFER_SIZE = 25      # Max source locations (24 points + bar)
+const HISTORY_BUFFER_SIZE = 120     # Typical game length in actions
+
+"""
+    BackgammonGame
+
+Mutable game state for backgammon, using bitboard representation.
+
+# Fields
+- `p0::UInt128`: Player 0's checker positions (4-bit nibbles per location)
+- `p1::UInt128`: Player 1's checker positions
+- `dice::SVector{2, Int8}`: Current dice values (0,0 indicates chance node)
+- `remaining_actions::Int8`: Actions remaining this turn (2 for doubles, 1 otherwise)
+- `current_player::Int8`: Current player (0 or 1)
+- `terminated::Bool`: Whether game has ended
+- `reward::Float32`: Final reward from P0's perspective (±1 single, ±2 gammon, ±3 backgammon)
+- `history::Vector{Int}`: Action history for this game
+- `doubles_only::Bool`: If true, all dice rolls are doubles (for training variants)
+
+# Internal Buffers (pre-allocated to reduce GC pressure)
+- `_actions_buffer`: Buffer for legal action generation
+- `_sources_buffer1`, `_sources_buffer2`: Buffers for source location lookups
+"""
 mutable struct BackgammonGame
     p0::UInt128 # Player 0 Checkers
     p1::UInt128 # Player 1 Checkers
@@ -74,21 +99,53 @@ mutable struct BackgammonGame
     _sources_buffer2::Vector{Int}   # Second buffer for nested source lookups
 end
 
+# Helper to create pre-allocated buffers for a new game
+function _create_game_buffers()
+    history = Int[]
+    sizehint!(history, HISTORY_BUFFER_SIZE)
+
+    actions_buf = Int[]
+    sizehint!(actions_buf, ACTIONS_BUFFER_SIZE)
+
+    src_buf1 = Int[]
+    sizehint!(src_buf1, SOURCES_BUFFER_SIZE)
+
+    src_buf2 = Int[]
+    sizehint!(src_buf2, SOURCES_BUFFER_SIZE)
+
+    return history, actions_buf, src_buf1, src_buf2
+end
+
 function BackgammonGame(p0, p1, dice, remaining, cp, term, rew)
-    actions_buf = Int[]; sizehint!(actions_buf, 200)
-    src_buf1 = Int[]; sizehint!(src_buf1, 25)
-    src_buf2 = Int[]; sizehint!(src_buf2, 25)
-    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, Int[], false, actions_buf, src_buf1, src_buf2)
+    history, actions_buf, src_buf1, src_buf2 = _create_game_buffers()
+    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, actions_buf, src_buf1, src_buf2)
 end
 
 function BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history)
-    actions_buf = Int[]; sizehint!(actions_buf, 200)
-    src_buf1 = Int[]; sizehint!(src_buf1, 25)
-    src_buf2 = Int[]; sizehint!(src_buf2, 25)
+    _, actions_buf, src_buf1, src_buf2 = _create_game_buffers()
     BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, actions_buf, src_buf1, src_buf2)
 end
 
 Base.show(io::IO, g::BackgammonGame) = print(io, "BackgammonGame(p=$(g.current_player), dice=$(g.dice))")
+
+# Helper to get initial board positions
+@inline function _get_initial_boards(short_game::Bool)
+    p0 = short_game ? INIT_P0_SHORT : INIT_P0_STANDARD
+    p1 = short_game ? INIT_P1_SHORT : INIT_P1_STANDARD
+    return p0, p1
+end
+
+# Helper to resolve first player (random if nothing, validates 0 or 1)
+@inline function _resolve_first_player(first_player::Union{Nothing, Integer})
+    if isnothing(first_player)
+        return rand(Random.default_rng(), 0:1)
+    end
+    fp = Int(first_player)
+    if fp != 0 && fp != 1
+        throw(ArgumentError("first_player must be 0, 1, or nothing (got $fp)"))
+    end
+    return fp
+end
 
 # --- Accessors ---
 
@@ -107,12 +164,26 @@ function winner(g::BackgammonGame)
     return g.reward > 0 ? Int8(0) : Int8(1)
 end
 
+"""
+    reset!(g::BackgammonGame; first_player=nothing, short_game=false, doubles_only=false) -> BackgammonGame
+
+Reset an existing game to initial state without reallocating buffers.
+
+This is more efficient than creating a new game with `initial_state()` when running
+many games in sequence, as it reuses the pre-allocated internal buffers.
+
+# Keyword Arguments
+- `first_player`: Set to `0` or `1` to choose starting player, or `nothing` for random.
+- `short_game`: Use modified board position with pieces closer to bearing off (faster games).
+- `doubles_only`: All dice rolls are doubles (1-1 through 6-6 with uniform probability).
+
+# Returns
+The same game object `g`, reset to initial state (a chance node awaiting dice roll).
+"""
 function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing,
                 short_game::Bool=false, doubles_only::Bool=false)
-    p0 = short_game ? INIT_P0_SHORT : INIT_P0_STANDARD
-    p1 = short_game ? INIT_P1_SHORT : INIT_P1_STANDARD
-
-    cp = isnothing(first_player) ? rand(Random.default_rng(), 0:1) : Int(first_player)
+    p0, p1 = _get_initial_boards(short_game)
+    cp = _resolve_first_player(first_player)
 
     g.p0 = p0
     g.p1 = p1
@@ -123,7 +194,7 @@ function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing
     g.reward = 0.0f0
     g.doubles_only = doubles_only
     empty!(g.history)
-    sizehint!(g.history, 120)  # Pre-allocate for typical game length
+    sizehint!(g.history, HISTORY_BUFFER_SIZE)
     return g
 end
 
@@ -256,22 +327,9 @@ handles dice rolls automatically.
 """
 function initial_state(; first_player::Union{Nothing, Integer}=nothing,
                        short_game::Bool=false, doubles_only::Bool=false)
-    p0 = short_game ? INIT_P0_SHORT : INIT_P0_STANDARD
-    p1 = short_game ? INIT_P1_SHORT : INIT_P1_STANDARD
-
-    cp = isnothing(first_player) ? rand(Random.default_rng(), 0:1) : Int(first_player)
-
-    history = Int[]
-    sizehint!(history, 120)  # Pre-allocate for typical game length
-
-    actions_buf = Int[]
-    sizehint!(actions_buf, 200)  # Pre-allocate for legal actions
-
-    src_buf1 = Int[]
-    sizehint!(src_buf1, 25)  # Pre-allocate for source locations
-
-    src_buf2 = Int[]
-    sizehint!(src_buf2, 25)  # Pre-allocate for nested source lookups
+    p0, p1 = _get_initial_boards(short_game)
+    cp = _resolve_first_player(first_player)
+    history, actions_buf, src_buf1, src_buf2 = _create_game_buffers()
 
     return BackgammonGame(
         p0, p1,
