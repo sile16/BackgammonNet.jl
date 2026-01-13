@@ -1670,5 +1670,129 @@ end
         @test isempty(g.history)
     end
 
+    @testset "Bit Manipulation Helpers" begin
+        # Test get_count
+        @testset "get_count" begin
+            # Empty board
+            board = UInt128(0)
+            for idx in 0:27
+                @test BackgammonNet.get_count(board, idx) == 0
+            end
+
+            # Single checker at various positions
+            for idx in 0:27
+                board = UInt128(1) << (idx << 2)
+                @test BackgammonNet.get_count(board, idx) == 1
+                # Other positions should be 0
+                for other in 0:27
+                    if other != idx
+                        @test BackgammonNet.get_count(board, other) == 0
+                    end
+                end
+            end
+
+            # Max checkers (15) at a position
+            for idx in [0, 10, 25, 27]
+                board = UInt128(15) << (idx << 2)
+                @test BackgammonNet.get_count(board, idx) == 15
+            end
+
+            # Multiple positions with different counts
+            board = (UInt128(3) << (5 << 2)) | (UInt128(7) << (10 << 2)) | (UInt128(15) << (20 << 2))
+            @test BackgammonNet.get_count(board, 5) == 3
+            @test BackgammonNet.get_count(board, 10) == 7
+            @test BackgammonNet.get_count(board, 20) == 15
+            @test BackgammonNet.get_count(board, 0) == 0
+        end
+
+        @testset "incr_count" begin
+            # Increment from 0
+            board = UInt128(0)
+            for idx in [0, 5, 15, 25, 27]
+                new_board = BackgammonNet.incr_count(board, idx)
+                @test BackgammonNet.get_count(new_board, idx) == 1
+                # Original unchanged (pure function)
+                @test BackgammonNet.get_count(board, idx) == 0
+            end
+
+            # Increment existing count
+            board = UInt128(5) << (10 << 2)
+            new_board = BackgammonNet.incr_count(board, 10)
+            @test BackgammonNet.get_count(new_board, 10) == 6
+
+            # Multiple increments
+            board = UInt128(0)
+            for i in 1:10
+                board = BackgammonNet.incr_count(board, 7)
+            end
+            @test BackgammonNet.get_count(board, 7) == 10
+
+            # Increment doesn't affect other positions
+            board = (UInt128(3) << (5 << 2)) | (UInt128(7) << (10 << 2))
+            new_board = BackgammonNet.incr_count(board, 5)
+            @test BackgammonNet.get_count(new_board, 5) == 4
+            @test BackgammonNet.get_count(new_board, 10) == 7  # Unchanged
+        end
+
+        @testset "decr_count" begin
+            # Decrement from positive
+            board = UInt128(5) << (10 << 2)
+            new_board = BackgammonNet.decr_count(board, 10)
+            @test BackgammonNet.get_count(new_board, 10) == 4
+
+            # Decrement to 0
+            board = UInt128(1) << (15 << 2)
+            new_board = BackgammonNet.decr_count(board, 15)
+            @test BackgammonNet.get_count(new_board, 15) == 0
+
+            # Multiple decrements
+            board = UInt128(10) << (7 << 2)
+            for i in 1:5
+                board = BackgammonNet.decr_count(board, 7)
+            end
+            @test BackgammonNet.get_count(board, 7) == 5
+
+            # Decrement doesn't affect other positions
+            board = (UInt128(3) << (5 << 2)) | (UInt128(7) << (10 << 2))
+            new_board = BackgammonNet.decr_count(board, 10)
+            @test BackgammonNet.get_count(new_board, 10) == 6
+            @test BackgammonNet.get_count(new_board, 5) == 3  # Unchanged
+        end
+
+        @testset "incr/decr roundtrip" begin
+            # Incrementing then decrementing should return to original
+            board = UInt128(0)
+            for idx in [0, 12, 25, 27]
+                board1 = BackgammonNet.incr_count(board, idx)
+                board2 = BackgammonNet.decr_count(board1, idx)
+                @test board2 == board
+            end
+
+            # Complex board roundtrip
+            board = (UInt128(2) << (1 << 2)) | (UInt128(5) << (12 << 2)) | (UInt128(3) << (17 << 2))
+            board1 = BackgammonNet.incr_count(board, 12)
+            board2 = BackgammonNet.decr_count(board1, 12)
+            @test board2 == board
+        end
+
+        @testset "edge cases" begin
+            # All nibbles at max (15) - test isolation
+            board = UInt128(0)
+            for idx in 0:27
+                board = board | (UInt128(15) << (idx << 2))
+            end
+            for idx in 0:27
+                @test BackgammonNet.get_count(board, idx) == 15
+            end
+
+            # Check nibble isolation - incrementing one doesn't overflow into adjacent
+            board = UInt128(14) << (10 << 2)  # 14 at position 10
+            new_board = BackgammonNet.incr_count(board, 10)
+            @test BackgammonNet.get_count(new_board, 10) == 15
+            @test BackgammonNet.get_count(new_board, 9) == 0
+            @test BackgammonNet.get_count(new_board, 11) == 0
+        end
+    end
+
 end
 
