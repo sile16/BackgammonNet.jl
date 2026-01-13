@@ -113,6 +113,8 @@ end
 const CHANCE_ACTIONS = collect(1:21)  # Pre-allocated chance node actions
 const CHANCE_ACTIONS_DOUBLES_ONLY = copy(DOUBLES_INDICES)  # Only doubles outcomes
 
+const PASS_PASS_ACTION = [encode_action(PASS_LOC, PASS_LOC)]  # Pre-allocated for no-move case
+
 function get_legal_actions(g::BackgammonGame)
     if is_chance_node(g)
         return g.doubles_only ? CHANCE_ACTIONS_DOUBLES_ONLY : CHANCE_ACTIONS
@@ -123,8 +125,9 @@ function get_legal_actions(g::BackgammonGame)
     cp = g.current_player
     p0, p1 = g.p0, g.p1
 
-    actions = Int[]
-    sizehint!(actions, 30)
+    # Reuse pre-allocated buffer to avoid GC pressure
+    actions = g._actions_buffer
+    empty!(actions)
 
     # Track max usage during generation to avoid second pass
     max_usage = 0
@@ -185,7 +188,7 @@ function get_legal_actions(g::BackgammonGame)
     unique!(actions)
 
     if isempty(actions)
-        return [encode_action(PASS_LOC, PASS_LOC)]
+        return PASS_PASS_ACTION
     end
 
     # Filter by max usage - avoid allocating intermediate array

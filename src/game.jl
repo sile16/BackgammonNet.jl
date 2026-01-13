@@ -61,14 +61,19 @@ mutable struct BackgammonGame
     reward::Float32
     history::Vector{Int}
     doubles_only::Bool # If true, all dice rolls are doubles
+    _actions_buffer::Vector{Int}  # Pre-allocated buffer for legal_actions (reduces GC)
 end
 
 function BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew)
-    BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew, Int[], false)
+    buf = Int[]
+    sizehint!(buf, 200)
+    BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew, Int[], false, buf)
 end
 
 function BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew, history)
-    BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew, history, false)
+    buf = Int[]
+    sizehint!(buf, 200)
+    BackgammonGame(p0, p1, dice, remaining, turn, cp, term, rew, history, false, buf)
 end
 
 Base.show(io::IO, g::BackgammonGame) = print(io, "BackgammonGame(p=$(g.current_player), dice=$(g.dice), turn=$(g.turn))")
@@ -241,6 +246,9 @@ function initial_state(; first_player::Union{Nothing, Integer}=nothing,
     history = Int[]
     sizehint!(history, 120)  # Pre-allocate for typical game length
 
+    actions_buf = Int[]
+    sizehint!(actions_buf, 200)  # Pre-allocate for legal actions
+
     return BackgammonGame(
         p0, p1,
         SVector{2, Int8}(0, 0),
@@ -250,7 +258,8 @@ function initial_state(; first_player::Union{Nothing, Integer}=nothing,
         false,
         0.0f0,
         history,
-        doubles_only
+        doubles_only,
+        actions_buf
     )
 end
 
