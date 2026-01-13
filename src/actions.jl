@@ -222,3 +222,137 @@ function get_legal_actions(g::BackgammonGame)
 end
 
 const legal_actions = get_legal_actions
+
+"""
+    is_action_valid(g::BackgammonGame, action_idx::Integer) -> Bool
+
+Fast validation that checks if a specific action is valid without generating all legal actions.
+This is O(1) vs O(n) for `action in legal_actions(g)`.
+
+Checks:
+1. Individual moves are legal (source has pieces, target not blocked, etc.)
+2. At least one ordering of the moves works
+3. Maximize dice rule is respected (uses both dice if possible, higher die if only one)
+"""
+function is_action_valid(g::BackgammonGame, action_idx::Integer)
+    d1 = Int(g.dice[1])
+    d2 = Int(g.dice[2])
+    cp = g.current_player
+    p0, p1 = g.p0, g.p1
+
+    loc1, loc2 = decode_action(action_idx)
+
+    # Both PASS - only valid if no moves are possible
+    if loc1 == PASS_LOC && loc2 == PASS_LOC
+        sources1 = get_legal_source_locs(p0, p1, cp, d1)
+        sources2 = d1 == d2 ? sources1 : get_legal_source_locs(p0, p1, cp, d2)
+        return isempty(sources1) && isempty(sources2)
+    end
+
+    # Check if move sequence is executable
+    can_use_both = false
+    can_use_d1_only = false
+    can_use_d2_only = false
+
+    if d1 == d2
+        # Doubles: loc1 and loc2 both use the same die value
+        if loc1 != PASS_LOC && loc2 != PASS_LOC
+            # Try loc1 then loc2
+            if is_move_legal_bits(p0, p1, cp, loc1, d1)
+                p0_n, p1_n = apply_move_internal(p0, p1, cp, loc1, d1)
+                if is_move_legal_bits(p0_n, p1_n, cp, loc2, d1)
+                    can_use_both = true
+                end
+            end
+            # Try loc2 then loc1
+            if !can_use_both && is_move_legal_bits(p0, p1, cp, loc2, d1)
+                p0_n, p1_n = apply_move_internal(p0, p1, cp, loc2, d1)
+                if is_move_legal_bits(p0_n, p1_n, cp, loc1, d1)
+                    can_use_both = true
+                end
+            end
+        elseif loc1 != PASS_LOC
+            # loc2 is PASS
+            if is_move_legal_bits(p0, p1, cp, loc1, d1)
+                can_use_d1_only = true
+            end
+        elseif loc2 != PASS_LOC
+            # loc1 is PASS
+            if is_move_legal_bits(p0, p1, cp, loc2, d1)
+                can_use_d2_only = true
+            end
+        end
+    else
+        # Non-doubles: loc1 uses d1, loc2 uses d2
+        if loc1 != PASS_LOC && loc2 != PASS_LOC
+            # Try loc1(d1) then loc2(d2)
+            if is_move_legal_bits(p0, p1, cp, loc1, d1)
+                p0_n, p1_n = apply_move_internal(p0, p1, cp, loc1, d1)
+                if is_move_legal_bits(p0_n, p1_n, cp, loc2, d2)
+                    can_use_both = true
+                end
+            end
+            # Try loc2(d2) then loc1(d1)
+            if !can_use_both && is_move_legal_bits(p0, p1, cp, loc2, d2)
+                p0_n, p1_n = apply_move_internal(p0, p1, cp, loc2, d2)
+                if is_move_legal_bits(p0_n, p1_n, cp, loc1, d1)
+                    can_use_both = true
+                end
+            end
+        elseif loc1 != PASS_LOC
+            # Using d1 only (loc2 is PASS)
+            if is_move_legal_bits(p0, p1, cp, loc1, d1)
+                can_use_d1_only = true
+            end
+        elseif loc2 != PASS_LOC
+            # Using d2 only (loc1 is PASS)
+            if is_move_legal_bits(p0, p1, cp, loc2, d2)
+                can_use_d2_only = true
+            end
+        end
+    end
+
+    # Validate against maximize dice rule
+    if can_use_both
+        return true
+    end
+
+    if can_use_d1_only || can_use_d2_only
+        # Check if using both dice was possible
+        sources1 = get_legal_source_locs(p0, p1, cp, d1)
+        for s1 in sources1
+            p0_n, p1_n = apply_move_internal(p0, p1, cp, s1, d1)
+            d2_val = d1 == d2 ? d1 : d2
+            sub = get_legal_source_locs(p0_n, p1_n, cp, d2_val)
+            if !isempty(sub)
+                return false  # Could use both dice, but action only uses one
+            end
+        end
+        if d1 != d2
+            sources2 = get_legal_source_locs(p0, p1, cp, d2)
+            for s2 in sources2
+                p0_n, p1_n = apply_move_internal(p0, p1, cp, s2, d2)
+                sub = get_legal_source_locs(p0_n, p1_n, cp, d1)
+                if !isempty(sub)
+                    return false  # Could use both dice, but action only uses one
+                end
+            end
+        end
+
+        # Only one die can be used - check higher die rule for non-doubles
+        if d1 != d2
+            other_die_sources = can_use_d1_only ? get_legal_source_locs(p0, p1, cp, d2) : sources1
+            if !isempty(other_die_sources)
+                # Both single-die options exist, must use higher
+                higher_is_d1 = d1 > d2
+                if (can_use_d1_only && !higher_is_d1) || (can_use_d2_only && higher_is_d1)
+                    return false  # Using lower die when higher is available
+                end
+            end
+        end
+
+        return true
+    end
+
+    return false
+end

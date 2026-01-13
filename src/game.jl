@@ -224,15 +224,23 @@ end
 
 Apply a deterministic action to the game state.
 
-!!! warning "Safety"
-    This function assumes `action_idx` is a valid action from `legal_actions(g)`.
-    Passing an illegal action will corrupt the bitboard state. This design is
-    intentional for RL performance—use `legal_actions(g)` to get valid actions.
+Validates that the action is legal before applying. Throws an error if the action
+is not in `legal_actions(g)`.
+
+!!! note "Performance"
+    Action validation is currently enabled for safety. Once the legal action mask
+    is thoroughly tested, validation can be disabled for RL performance by removing
+    the validation check below.
 """
 function apply_action!(g::BackgammonGame, action_idx::Integer)
     if g.terminated; return; end
     if is_chance_node(g)
         error("Cannot apply deterministic action on a chance node. Use apply_chance! or sample_chance!")
+    end
+
+    # Validate action (can be removed later for performance once legal_actions is verified)
+    if !is_action_valid(g, action_idx)
+        error("Invalid action $action_idx. Valid actions: $(legal_actions(g))")
     end
 
     push!(g.history, Int(action_idx))
