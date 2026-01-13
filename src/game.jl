@@ -636,6 +636,39 @@ function step!(g::BackgammonGame, action::Integer, rng::AbstractRNG=Random.defau
 end
 
 """
+    _compute_win_multiplier(opp_board::UInt128, opp_off_idx::Integer, opp_bar_idx::Integer,
+                            home_range::UnitRange{Int}) -> Float32
+
+Internal helper to compute the win multiplier (1=single, 2=gammon, 3=backgammon).
+
+Checks opponent's board state to determine scoring:
+- Single (1.0): Opponent has at least one checker borne off
+- Gammon (2.0): Opponent has no checkers borne off
+- Backgammon (3.0): Gammon + opponent has checker on bar or in winner's home board
+"""
+@inline function _compute_win_multiplier(opp_board::UInt128, opp_off_idx::Integer,
+                                         opp_bar_idx::Integer, home_range::UnitRange{Int})
+    # Check if opponent has any pieces off (if so, only single win)
+    if get_count(opp_board, opp_off_idx) > 0
+        return 1.0f0
+    end
+
+    # Gammon - check for backgammon conditions
+    if get_count(opp_board, opp_bar_idx) > 0
+        return 3.0f0  # Backgammon (opponent on bar)
+    end
+
+    # Check if opponent has checkers in winner's home board
+    for i in home_range
+        if get_count(opp_board, i) > 0
+            return 3.0f0  # Backgammon (opponent in winner's home)
+        end
+    end
+
+    return 2.0f0  # Gammon
+end
+
+"""
     apply_single_move!(g::BackgammonGame, loc::Integer, die::Integer)
 
 Internal function to apply a single checker move and check for game termination.
@@ -659,36 +692,16 @@ function apply_single_move!(g::BackgammonGame, loc::Integer, die::Integer)
     # Check for game termination (15 pieces borne off)
     cp = g.current_player
     if cp == 0
-        if get_count(g.p0, IDX_P0_OFF) == 15
+        if get_count(g.p0, IDX_P0_OFF) == MAX_CHECKERS
             g.terminated = true
-            multiplier = 1.0f0
-            if get_count(g.p1, IDX_P1_OFF) == 0
-                multiplier = 2.0f0 # Gammon
-                if get_count(g.p1, IDX_P1_BAR) > 0
-                    multiplier = 3.0f0 # Backgammon (on bar)
-                else
-                    for i in 19:24
-                        if get_count(g.p1, i) > 0; multiplier = 3.0f0; break; end # Backgammon (in home)
-                    end
-                end
-            end
-            g.reward = multiplier
+            # P0 wins: P0's home board is physical 19-24
+            g.reward = _compute_win_multiplier(g.p1, IDX_P1_OFF, IDX_P1_BAR, 19:24)
         end
     else
-        if get_count(g.p1, IDX_P1_OFF) == 15
+        if get_count(g.p1, IDX_P1_OFF) == MAX_CHECKERS
             g.terminated = true
-            multiplier = 1.0f0
-            if get_count(g.p0, IDX_P0_OFF) == 0
-                multiplier = 2.0f0 # Gammon
-                if get_count(g.p0, IDX_P0_BAR) > 0
-                    multiplier = 3.0f0 # Backgammon (on bar)
-                else
-                    for i in 1:6
-                        if get_count(g.p0, i) > 0; multiplier = 3.0f0; break; end # Backgammon (in home)
-                    end
-                end
-            end
-            g.reward = -multiplier
+            # P1 wins: P1's home board is physical 1-6
+            g.reward = -_compute_win_multiplier(g.p0, IDX_P0_OFF, IDX_P0_BAR, 1:6)
         end
     end
 end
