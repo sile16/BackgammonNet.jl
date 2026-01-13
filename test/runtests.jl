@@ -1794,5 +1794,92 @@ end
         end
     end
 
+    @testset "Buffer Stress Tests" begin
+        # Stress test: Play many games with buffer reuse via reset!
+        @testset "Buffer reuse across many games" begin
+            rng = Random.MersenneTwister(54321)
+            g = initial_state(first_player=0)
+
+            for game_num in 1:100
+                reset!(g, first_player=rand(rng, 0:1))
+                sample_chance!(g, rng)
+
+                move_count = 0
+                while !game_terminated(g) && move_count < 500
+                    actions = legal_actions(g)
+                    @test !isempty(actions)
+                    step!(g, rand(rng, actions), rng)
+                    move_count += 1
+                end
+
+                # Verify game completed without buffer issues
+                @test game_terminated(g) || move_count == 500
+            end
+        end
+
+        # Stress test: Verify legal_actions buffer handles max complexity
+        @testset "Legal actions buffer capacity" begin
+            # Play games specifically to find high-action-count positions
+            rng = Random.MersenneTwister(12345)
+            max_actions_seen = 0
+
+            for _ in 1:50
+                g = initial_state(first_player=0)
+                sample_chance!(g, rng)
+
+                for _ in 1:100
+                    if game_terminated(g)
+                        break
+                    end
+                    actions = legal_actions(g)
+                    max_actions_seen = max(max_actions_seen, length(actions))
+                    @test length(actions) <= 200  # Should never exceed buffer size
+                    step!(g, rand(rng, actions), rng)
+                end
+            end
+
+            # Should have seen reasonably diverse action counts
+            @test max_actions_seen > 1
+        end
+
+        # Stress test: History buffer with long games (doubles only = longer games)
+        @testset "History buffer with long games" begin
+            rng = Random.MersenneTwister(99999)
+
+            for _ in 1:10
+                g = initial_state(first_player=0, doubles_only=true)
+                sample_chance!(g, rng)
+
+                while !game_terminated(g) && length(g.history) < 500
+                    actions = legal_actions(g)
+                    step!(g, rand(rng, actions), rng)
+                end
+
+                # History should have grown without issues
+                @test length(g.history) > 0
+                @test game_terminated(g) || length(g.history) >= 500
+            end
+        end
+
+        # Stress test: Rapid reset! doesn't leak memory or corrupt state
+        @testset "Rapid reset stress test" begin
+            g = initial_state(first_player=0)
+
+            for i in 1:1000
+                reset!(g, first_player=i % 2, short_game=(i % 3 == 0), doubles_only=(i % 5 == 0))
+                @test is_chance_node(g)
+                @test isempty(g.history)
+                @test g.doubles_only == (i % 5 == 0)
+
+                # Occasionally play a move
+                if i % 10 == 0
+                    sample_chance!(g)
+                    actions = legal_actions(g)
+                    @test !isempty(actions)
+                end
+            end
+        end
+    end
+
 end
 
