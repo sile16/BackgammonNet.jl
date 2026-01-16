@@ -152,23 +152,51 @@ with pre-allocated buffers to avoid GC pressure.
 
 The Julia implementation has been validated against gnubg by comparing **final board states** after each turn. All unique final positions computed by Julia match exactly what gnubg computes.
 
+**Latest validation run (5000 games):**
+- Move validation: **0 mismatches** (460,945 positions checked vs gnubg)
+- Reward validation: **0 mismatches** (normal/gammon/backgammon scoring)
+
 ### Validation Scripts
 
 | Script | Speed | Status | Description |
 |--------|-------|--------|-------------|
-| `test/validate_full.jl` | ~0.1 games/sec | **PASSES** | Single-threaded CLI validation |
+| `test/gnubg_hybrid.jl` | ~0.9 games/sec | **PASSES** | Parallel workers + small batches (recommended) |
 | `test/gnubg_parallel.jl` | ~0.5 games/sec | **PASSES** | Parallel gnubg processes |
-| `test/gnubg_hybrid.jl` | ~0.9 games/sec | **PASSES** | Parallel workers + small batches |
+| `test/validate_full.jl` | ~0.1 games/sec | **PASSES** | Single-threaded CLI validation |
+| `test/validate_rewards.jl` | ~3500 games/sec | **PASSES** | Fast reward-only validation (Julia-only) |
+| `test/validate_games.jl` | ~0.09 games/sec | **PASSES** | Full game + reward validation |
 
-**Recommended for validation**: `gnubg_hybrid.jl` (fastest while maintaining accuracy)
+**Recommended for validation**: `gnubg_hybrid.jl` for move validation + `validate_rewards.jl` for reward validation
 
 ```bash
-# Run validation with 100 games
+# Run move validation (recommended)
 julia --project -t 4 test/gnubg_hybrid.jl 100
+
+# Run reward validation (fast, Julia-only)
+julia --project test/validate_rewards.jl 5000
 
 # Full validation (slow but thorough)
 julia --project test/validate_full.jl 1000
 ```
+
+### Reward Validation Details
+
+Rewards are validated based on backgammon scoring rules:
+- **Normal win (±1)**: Loser has borne off at least one checker
+- **Gammon (±2)**: Loser has not borne off any checkers
+- **Backgammon (±3)**: Gammon + loser has checker on bar or in winner's home board
+
+**Observed reward distribution (5000 random games):**
+| Reward | Type | Count | Percentage |
+|--------|------|-------|------------|
+| +1 | P0 normal | 931 | 18.6% |
+| +2 | P0 gammon | 898 | 18.0% |
+| +3 | P0 backgammon | 679 | 13.6% |
+| -1 | P1 normal | 927 | 18.5% |
+| -2 | P1 gammon | 901 | 18.0% |
+| -3 | P1 backgammon | 664 | 13.3% |
+
+This shows ~37% normal wins, ~36% gammons, and ~27% backgammons, which is reasonable for random play.
 
 ### Key Implementation Files
 - `test/gnubg_bridge.jl` - Core gnubg CLI interface (board conversion, move parsing)
