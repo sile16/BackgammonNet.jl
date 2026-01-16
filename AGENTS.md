@@ -283,3 +283,150 @@ board[1] = ON-ROLL player's checkers
 - gnubg: compact notation like "13/7" (one checker moves 13→8→7)
 - Julia: separate sources (loc1, loc2) where each uses one die
 - Same final positions, different representations
+
+---
+
+## GnubgInterface Module (test/GnubgInterface.jl)
+
+A clean, high-level interface for integrating gnubg neural network evaluation into Julia code.
+
+### Quick Start
+
+```julia
+include("test/GnubgInterface.jl")
+using .GnubgInterface
+
+# Evaluate a position
+g = BackgammonNet.initial_state()
+BackgammonNet.sample_chance!(g, MersenneTwister(42))
+equity = evaluate(g)                    # cubeless money equity
+probs = evaluate_probs(g)               # (win, win_g, win_bg, lose_g, lose_bg)
+
+# Get best move
+action, equity = best_move(g)
+
+# Play games between agents
+result = play_game(GnubgAgent(), RandomAgent(seed=1); seed=1, verbose=true)
+result = play_match(GnubgAgent(ply=1), RandomAgent(), 100; verbose=true)
+```
+
+### Ply Settings (Search Depth)
+
+Control gnubg's search depth for accuracy vs speed tradeoff:
+
+```julia
+# Global default
+set_default_ply!(1)                     # affects all subsequent calls
+get_default_ply()                       # check current default
+
+# Per-call override
+evaluate(g; ply=2)                      # 2-ply for this call only
+best_move(g; ply=0)                     # neural net only
+
+# Per-agent setting
+gnubg_strong = GnubgAgent(ply=2)        # always uses 2-ply
+gnubg_fast = GnubgAgent(ply=0)          # always uses 0-ply
+```
+
+### Weights & Biases (wandb) Integration
+
+Monitor match progress with wandb logging:
+
+```julia
+# Initialize wandb
+init_wandb("backgammon-eval", name="gnubg-vs-random", config=Dict("ply"=>2))
+
+# Play match (automatically logs metrics)
+result = play_match(GnubgAgent(ply=2), RandomAgent(), 1000; verbose=true)
+
+# Finish logging
+finish_wandb()
+```
+
+Logged metrics: `games`, `agent0_wins`, `agent1_wins`, `agent0_win_rate`, `agent0_points`, `agent1_points`, `avg_moves`
+
+### Agent Types
+
+| Agent | Description |
+|-------|-------------|
+| `GnubgAgent(ply=0)` | Uses gnubg neural net evaluation |
+| `RandomAgent(seed=42)` | Plays random legal moves |
+| `CustomAgent(move_fn)` | Custom function `move_fn(game) -> action` |
+
+### Dice Control
+
+**Julia controls the dice**, not gnubg. In `play_game`, dice are rolled via `BackgammonNet.sample_chance!(g, rng)` using a seeded `MersenneTwister`. gnubg only evaluates positions - it never sees or influences dice rolls.
+
+### Performance Benchmarks
+
+Tested on typical hardware:
+
+| Operation | Ply 0 | Ply 1 | Ply 2 |
+|-----------|-------|-------|-------|
+| Raw evaluation | 85,706/sec | 72,480/sec | 35/sec |
+| Best move selection | 7,561/sec | 5,193/sec | ~0.3/sec |
+| Games (gnubg vs random) | 46/sec | 1.5/sec | very slow |
+
+**Baselines:**
+| Operation | Speed |
+|-----------|-------|
+| Random vs Random (with equity logging) | 422 games/sec |
+| Pure Julia random games (no gnubg) | 3,547 games/sec |
+
+**Key observations:**
+- Ply 0 and Ply 1 have similar raw eval speed (~72-86k/sec)
+- Ply 2 is ~2000x slower (gnubg does deep minimax search)
+- `play_game` calls `evaluate()` for equity logging on every move, adding overhead
+- Main bottleneck at ply 0: ~11 legal moves per position × evaluation cost
+
+### PyCall Configuration
+
+**IMPORTANT:** gnubg must be installed in the Python that PyCall uses.
+
+Check current configuration:
+```julia
+using PyCall
+println(PyCall.python)  # Shows which Python PyCall uses
+```
+
+If gnubg is in a different Python (e.g., pyenv), reconfigure PyCall:
+```bash
+# Set PYTHON to the correct interpreter and rebuild
+julia --project -e '
+ENV["PYTHON"] = "/path/to/python/with/gnubg"
+using Pkg
+Pkg.build("PyCall")
+'
+```
+
+Common issue: PyCall defaults to Julia's Conda Python, but gnubg may be installed in system Python or pyenv. The error message will say `ModuleNotFoundError: No module named 'gnubg'`.
+
+### Lessons Learned
+
+**1. gnubg `best_move()` and `moves()` are buggy:**
+- They return illegal moves (don't respect blocking)
+- Only `gnubg.probabilities(board, ply)` works correctly
+- Solution: Julia generates legal moves + gnubg evaluates positions
+
+**2. Board format is perspective-relative:**
+```
+board[0] = OPPONENT's checkers (25 elements)
+board[1] = ON-ROLL player's checkers (25 elements)
+```
+Both arrays: index 0 = bar, indices 1-24 = points from on-roll player's perspective.
+
+**3. Ply parameter to gnubg.probabilities():**
+- `ply=0`: Neural net evaluation only (fast)
+- `ply=1`: 1-ply lookahead (slightly slower, more accurate)
+- `ply=2`: 2-ply lookahead (very slow, even more accurate)
+
+**4. Equity calculation from probabilities:**
+```julia
+equity = (win - lose) + (win_g - lose_g) + 2*(win_bg - lose_bg)
+# where lose = 1 - win
+```
+
+**5. GnubgAgent win rate vs RandomAgent:**
+- Ply 0: ~75% win rate
+- Ply 1: ~60% win rate (small sample, expected to be higher with more games)
+- gnubg is a strong player even at ply 0
