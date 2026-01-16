@@ -143,3 +143,115 @@ with pre-allocated buffers to avoid GC pressure.
 - Alternative: Track max_usage per-action during generation (more complex code)
 - Current approach prioritizes correctness and maintainability over micro-optimization
 - For RL training, actions are typically sampled from policy, not enumerated
+
+---
+
+## gnubg Validation
+
+### Validation Status: PASSES (0 mismatches)
+
+The Julia implementation has been validated against gnubg by comparing **final board states** after each turn. All unique final positions computed by Julia match exactly what gnubg computes.
+
+### Validation Scripts
+
+| Script | Speed | Status | Description |
+|--------|-------|--------|-------------|
+| `test/validate_full.jl` | ~0.1 games/sec | **PASSES** | Single-threaded CLI validation |
+| `test/gnubg_parallel.jl` | ~0.5 games/sec | **PASSES** | Parallel gnubg processes |
+| `test/gnubg_hybrid.jl` | ~0.9 games/sec | **PASSES** | Parallel workers + small batches |
+
+**Recommended for validation**: `gnubg_hybrid.jl` (fastest while maintaining accuracy)
+
+```bash
+# Run validation with 100 games
+julia --project -t 4 test/gnubg_hybrid.jl 100
+
+# Full validation (slow but thorough)
+julia --project test/validate_full.jl 1000
+```
+
+### Key Implementation Files
+- `test/gnubg_bridge.jl` - Core gnubg CLI interface (board conversion, move parsing)
+- `test/gnubg_hybrid.jl` - Fast parallel validation (recommended)
+- `test/gnubg_parallel.jl` - Parallel single-query validation
+- `test/validate_full.jl` - Original single-threaded validation
+
+### Technical Notes
+
+**PyCall Interface (gnubg.moves())**: The Python gnubg module's `moves()` function returns move sequences, NOT unique final positions. This makes it unsuitable for direct validation. The CLI `hint` command is used instead.
+
+**Board Format (for gnubg Python module)**:
+```
+board[0] = OPPONENT's checkers
+board[1] = ON-ROLL player's checkers
+```
+
+**Coordinate mappings (0-indexed gnubg_idx)**:
+- P0 on roll: `julia_idx = 24 - gnubg_idx`
+- P1 on roll: `julia_idx = gnubg_idx + 1`
+
+**Why Final State Comparison (not Move Sequences)**:
+
+Julia and gnubg represent move sequences differently:
+- gnubg uses compact notation: "13/7" (one checker moves 13→8→7 using both dice)
+- Julia encodes separate sources: (loc1, loc2) where loc1 uses die1, loc2 uses die2
+
+This means gnubg "13/7" vs Julia's "(8→7, 13→8)" are different notations for moves that
+reach the SAME final position. The final state comparison correctly validates that all
+reachable positions match, which is what matters for game correctness.
+
+`test/validate_moves.jl` compares move sequences directly but shows representation differences
+(not logic bugs). Use final state validation for correctness checking.
+
+---
+
+## gnubg Fast Evaluation Interface (test/gnubg_pycall.jl)
+
+### Performance
+
+| Operation | Speed | Notes |
+|-----------|-------|-------|
+| `gnubg.probabilities()` | ~131k/sec | Raw neural net evaluation |
+| `evaluate_position_gnubg()` | ~48k/sec | With board conversion |
+| `get_best_move_hybrid()` | ~1.4k/sec | Julia moves + gnubg eval |
+| `play_game_hybrid()` | ~1.5 games/sec | Full games vs gnubg |
+
+### Key Functions
+
+```julia
+include("test/gnubg_pycall.jl")
+
+evaluate_position_gnubg(g)    # Fast position evaluation (~48k/sec)
+get_best_move_hybrid(g)       # Best move using Julia moves + gnubg eval
+play_game_hybrid(julia_player; seed, verbose)  # Play game vs gnubg
+play_game_vs_gnubg_cli(julia_player; seed, verbose)  # CLI-based (slower, for comparison)
+```
+
+### Lessons Learned
+
+**1. gnubg Python module `best_move()` and `moves()` are BUGGY:**
+- They don't respect blocking rules and return illegal moves
+- Only `gnubg.probabilities()` works correctly for neural net evaluation
+- Use hybrid approach: Julia generates legal moves + gnubg evaluates positions
+
+**2. Direct ccall to gnubg C library doesn't work:**
+- gnubg-nn-pypi is a Python extension module (.cpython-*.so)
+- Requires full Python runtime, sys.path, and import machinery
+- Attempting direct ccall causes segfaults in `BearoffInit`
+- PyCall is fast enough (~131k raw evals/sec)
+
+**3. Board format for gnubg Python module:**
+```
+board[0] = OPPONENT's checkers (25 elements: bar + 24 points)
+board[1] = ON-ROLL player's checkers
+```
+
+**4. Position ID validation:**
+- Known gnubg starting position ID: `4HPwATDgc/ABMA`
+- Python module produces different ID due to board format bug
+- Use final board state comparison, not position IDs
+
+**5. Move notation differences:**
+- gnubg: compact notation like "13/7" (one checker moves 13→8→7)
+- Julia: separate sources (loc1, loc2) where each uses one die
+- Same final positions, different representations

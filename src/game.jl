@@ -139,6 +139,45 @@ end
 Base.show(io::IO, g::BackgammonGame) = print(io, "BackgammonGame(p=$(g.current_player), dice=$(g.dice))")
 
 """
+    Base.==(g1::BackgammonGame, g2::BackgammonGame)
+
+Value-based equality for game states. Compares all game state fields except
+internal buffers and history (which don't affect the game state).
+
+This enables using BackgammonGame as dictionary keys in MCTS trees.
+"""
+function Base.:(==)(g1::BackgammonGame, g2::BackgammonGame)
+    return g1.p0 == g2.p0 &&
+           g1.p1 == g2.p1 &&
+           g1.dice == g2.dice &&
+           g1.remaining_actions == g2.remaining_actions &&
+           g1.current_player == g2.current_player &&
+           g1.terminated == g2.terminated &&
+           g1.reward == g2.reward &&
+           g1.doubles_only == g2.doubles_only
+end
+
+"""
+    Base.hash(g::BackgammonGame, h::UInt)
+
+Hash function for game states, consistent with `==`.
+Combines hashes of all game state fields.
+
+This enables using BackgammonGame as dictionary keys in MCTS trees.
+"""
+function Base.hash(g::BackgammonGame, h::UInt)
+    h = hash(g.p0, h)
+    h = hash(g.p1, h)
+    h = hash(g.dice, h)
+    h = hash(g.remaining_actions, h)
+    h = hash(g.current_player, h)
+    h = hash(g.terminated, h)
+    h = hash(g.reward, h)
+    h = hash(g.doubles_only, h)
+    return h
+end
+
+"""
     _get_initial_boards(short_game::Bool) -> (UInt128, UInt128)
 
 Internal helper to retrieve initial bitboard positions.
