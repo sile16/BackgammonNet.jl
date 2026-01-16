@@ -174,69 +174,9 @@ hint 999
     return moves
 end
 
-"""
-    run_gnubg_hint_batch(positions::Vector{Tuple{Vector{Int}, Int, Int}}) -> Vector{Vector{String}}
-
-Batch version using parallel processes.
-Each position is (simple_board, d1, d2).
-Returns a vector of move lists, one per position.
-"""
-function run_gnubg_hint_batch(positions::Vector{Tuple{Vector{Int}, Int, Int}})
-    isempty(positions) && return Vector{Vector{String}}[]
-
-    # Run queries in parallel using multiple gnubg processes
-    n = length(positions)
-    results = Vector{Vector{String}}(undef, n)
-
-    # Use @sync/@async for parallel execution
-    @sync for (i, (simple, d1, d2)) in enumerate(positions)
-        @async results[i] = run_gnubg_hint(simple, d1, d2)
-    end
-
-    return results
-end
-
-"""
-    get_gnubg_final_states_batch(games::Vector{BackgammonGame}) -> Vector{Set{Vector{Int}}}
-
-Batch version: get final states for multiple game positions at once.
-"""
-function get_gnubg_final_states_batch(games::Vector{BackgammonGame})
-    # Prepare batch
-    positions = Tuple{Vector{Int}, Int, Int}[]
-    for g in games
-        simple = julia_to_gnubg_simple(g)
-        d1, d2 = Int(g.dice[1]), Int(g.dice[2])
-        push!(positions, (simple, d1, d2))
-    end
-
-    # Run batch query
-    all_moves = run_gnubg_hint_batch(positions)
-
-    # Process each result
-    results = Set{Vector{Int}}[]
-    for (i, move_strs) in enumerate(all_moves)
-        simple = positions[i][1]
-        final_states = Set{Vector{Int}}()
-
-        if isempty(move_strs)
-            # No legal moves = pass
-            push!(final_states, simple[1:26])
-        else
-            for move_str in move_strs
-                board = copy(simple)
-                moves = parse_gnubg_move(move_str)
-                for (from_pt, to_pt) in moves
-                    apply_gnubg_move!(board, from_pt, to_pt)
-                end
-                push!(final_states, board[1:26])
-            end
-        end
-        push!(results, final_states)
-    end
-
-    return results
-end
+# Note: Batch functions (run_gnubg_hint_batch, get_gnubg_final_states_batch) are defined
+# in gnubg_hybrid.jl with optimized implementations. This file provides the core single-query
+# functions that gnubg_hybrid.jl builds upon.
 
 """
     parse_gnubg_move(move_str::String) -> Vector{Tuple{Int, Int}}

@@ -133,7 +133,7 @@ with pre-allocated buffers to avoid GC pressure.
 
 ### Performance Tradeoffs in legal_actions
 
-**Why `unique!(actions)` is needed (line 250):**
+**Why `unique!(actions)` is needed:**
 - For non-doubles, paths A (d1 then d2) and B (d2 then d1) can generate the same action
 - Example: Moving same checker with both dice may have identical encoded actions
 - `unique!` deduplicates in-place to avoid returning duplicate actions
