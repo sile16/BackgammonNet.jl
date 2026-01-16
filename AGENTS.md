@@ -152,22 +152,41 @@ with pre-allocated buffers to avoid GC pressure.
 
 The Julia implementation has been validated against gnubg by comparing **final board states** after each turn. All unique final positions computed by Julia match exactly what gnubg computes.
 
-**Latest validation run (5000 games):**
-- Move validation: **0 mismatches** (460,945 positions checked vs gnubg)
-- Reward validation: **0 mismatches** (normal/gammon/backgammon scoring)
+**Validated commit:** `a5e7db3` (2026-01-16)
+
+**Latest validation run:**
+- Move validation: **500 games, 46,174 positions, 0 mismatches** (~78 pos/sec)
+- Reward validation: **5,000 games, 0 mismatches** (~3,734 games/sec)
+
+### Why Two gnubg Interfaces?
+
+We have two separate interfaces for gnubg, each serving a different purpose:
+
+| Interface | Method | Speed | Used For |
+|-----------|--------|-------|----------|
+| `GnubgInterface.jl` | PyCall | ~85k evals/sec | Position evaluation, playing games |
+| `gnubg_bridge.jl` | CLI | ~78 pos/sec | Validation (enumerating ALL legal moves) |
+
+**Why not just use PyCall for everything?**
+
+1. **PyCall `gnubg.probabilities()`** - Works correctly, returns position evaluation (win/gammon/backgammon probabilities). This is what `GnubgInterface.jl` uses.
+
+2. **PyCall `gnubg.moves()`** - Returns move sequences but has historically shown issues with move legality in some versions. More importantly, it returns move *sequences* (e.g., "13/7") not unique final *positions*, making it unsuitable for validation.
+
+3. **CLI `gnubg hint`** - Returns all legal moves correctly. We use this to validate Julia's `legal_actions()` by comparing final board states.
+
+**Bottom line:** PyCall is fast and works for evaluation. CLI is slow but necessary for comprehensive validation because it's the only reliable way to enumerate all legal moves from gnubg.
 
 ### Validation Scripts
 
-| Script | Speed | Status | Description |
-|--------|-------|--------|-------------|
-| `test/gnubg_hybrid.jl` | ~0.9 games/sec | **PASSES** | Parallel workers + gnubg CLI validation (recommended) |
-| `test/validate_rewards.jl` | ~3500 games/sec | **PASSES** | Fast reward-only validation (Julia-only) |
-
-**Recommended for validation**: `gnubg_hybrid.jl` for move validation + `validate_rewards.jl` for reward validation
+| Script | Speed | Description |
+|--------|-------|-------------|
+| `test/gnubg_hybrid.jl` | ~0.8 games/sec | Parallel CLI validation (compares final board states) |
+| `test/validate_rewards.jl` | ~3,700 games/sec | Fast Julia-only reward validation |
 
 ```bash
-# Run move validation (recommended)
-julia --project -t 4 test/gnubg_hybrid.jl 100
+# Run move validation
+julia --project -t 4 test/gnubg_hybrid.jl 500
 
 # Run reward validation (fast, Julia-only)
 julia --project test/validate_rewards.jl 5000
@@ -183,33 +202,22 @@ Rewards are validated based on backgammon scoring rules:
 **Observed reward distribution (5000 random games):**
 | Reward | Type | Count | Percentage |
 |--------|------|-------|------------|
-| +1 | P0 normal | 931 | 18.6% |
-| +2 | P0 gammon | 898 | 18.0% |
-| +3 | P0 backgammon | 679 | 13.6% |
-| -1 | P1 normal | 927 | 18.5% |
-| -2 | P1 gammon | 901 | 18.0% |
-| -3 | P1 backgammon | 664 | 13.3% |
+| +1 | P0 normal | 941 | 18.8% |
+| +2 | P0 gammon | 894 | 17.9% |
+| +3 | P0 backgammon | 673 | 13.5% |
+| -1 | P1 normal | 917 | 18.3% |
+| -2 | P1 gammon | 905 | 18.1% |
+| -3 | P1 backgammon | 670 | 13.4% |
 
 This shows ~37% normal wins, ~36% gammons, and ~27% backgammons, which is reasonable for random play.
 
 ### Key Implementation Files
 - `test/gnubg_bridge.jl` - Core gnubg CLI interface (board conversion, move parsing)
-- `test/gnubg_hybrid.jl` - Fast parallel validation (recommended)
+- `test/gnubg_hybrid.jl` - Parallel validation using CLI (compares Julia vs gnubg final states)
 - `test/validate_rewards.jl` - Fast Julia-only reward validation
+- `test/GnubgInterface.jl` - PyCall-based interface for position evaluation and game playing
 
 ### Technical Notes
-
-**PyCall Interface (gnubg.moves())**: The Python gnubg module's `moves()` function returns move sequences, NOT unique final positions. This makes it unsuitable for direct validation. The CLI `hint` command is used instead.
-
-**Board Format (for gnubg Python module)**:
-```
-board[0] = OPPONENT's checkers
-board[1] = ON-ROLL player's checkers
-```
-
-**Coordinate mappings (0-indexed gnubg_idx)**:
-- P0 on roll: `julia_idx = 24 - gnubg_idx`
-- P1 on roll: `julia_idx = gnubg_idx + 1`
 
 **Why Final State Comparison (not Move Sequences)**:
 
@@ -220,6 +228,16 @@ Julia and gnubg represent move sequences differently:
 This means gnubg "13/7" vs Julia's "(8→7, 13→8)" are different notations for moves that
 reach the SAME final position. The final state comparison correctly validates that all
 reachable positions match, which is what matters for game correctness.
+
+**Board Format (for gnubg Python module)**:
+```
+board[0] = OPPONENT's checkers
+board[1] = ON-ROLL player's checkers
+```
+
+**Coordinate mappings (0-indexed gnubg_idx)**:
+- P0 on roll: `julia_idx = 24 - gnubg_idx`
+- P1 on roll: `julia_idx = gnubg_idx + 1`
 
 ---
 
