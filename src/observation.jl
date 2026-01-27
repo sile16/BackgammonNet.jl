@@ -597,7 +597,7 @@ end
 """
     observe_full(g::BackgammonGame) -> Array{Float32,3}
 
-Generate full observation (70 channels). Shape: (70, 1, 25).
+Generate full observation (70 channels). Shape: (70, 1, 26).
 
 Includes all minimal features plus pre-computed arithmetic features.
 No strategic bias - only saves the network from doing math.
@@ -644,7 +644,7 @@ end
 """
     observe_biased(g::BackgammonGame) -> Array{Float32,3}
 
-Generate biased observation (130 channels). Shape: (130, 1, 25).
+Generate biased observation (130 channels). Shape: (130, 1, 26).
 
 Includes all full features plus hand-crafted strategic features
 inspired by TD-Gammon and gnubg.

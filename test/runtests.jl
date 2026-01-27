@@ -1106,6 +1106,22 @@ end
         @test obs4[8, 1, 26] == 1.0f0   # >=2 at opponent bar
         @test obs4[9, 1, 26] == 1.0f0   # >=3 at opponent bar
         @test obs4[10, 1, 26] == 0.0f0  # >=4 at opponent bar
+
+        # Test bar placement with current_player=1 (canonical flip)
+        # Board indices 25/26 are perspective-relative: 25=my bar, 26=opp bar
+        # When P1 is current player, board[25] is P1's bar, board[26] is P0's bar
+        b5 = zeros(MVector{28, Int8})
+        b5[25] = 2   # My bar (P1's bar when current_player=1)
+        b5[26] = -1  # Opponent bar (P0's bar when current_player=1)
+        g5 = make_test_game(board=b5, dice=(1, 2), current_player=1)
+        obs5 = observe_minimal(g5)
+        # My bar should be at spatial index 1
+        @test obs5[1, 1, 1] == 1.0f0  # >=1 at my bar
+        @test obs5[2, 1, 1] == 1.0f0  # >=2 at my bar
+        @test obs5[3, 1, 1] == 0.0f0  # >=3 at my bar
+        # Opponent bar should be at spatial index 26
+        @test obs5[7, 1, 26] == 1.0f0   # >=1 at opponent bar
+        @test obs5[8, 1, 26] == 0.0f0   # >=2 at opponent bar
     end
 
     @testset "Dice One-Hot Encoding" begin
