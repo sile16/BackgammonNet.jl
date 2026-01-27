@@ -856,34 +856,6 @@ function observe_biased!(obs::AbstractArray{Float32,3}, g::BackgammonGame;
     return obs
 end
 
-# --- Legacy API Compatibility ---
-
-# Keep old names working (deprecated)
-const OBS_SIZE_FAST = OBS_CHANNELS_MINIMAL
-const OBS_SIZE_FULL = OBS_CHANNELS_FULL
-
-"""
-    observe_fast(g::BackgammonGame) -> Vector{Float32}
-
-DEPRECATED: Use `observe_minimal(g)` instead.
-Returns flattened minimal observation for backward compatibility.
-"""
-function observe_fast(g::BackgammonGame)
-    obs3d = observe_minimal(g)
-    return vec(obs3d)
-end
-
-"""
-    observe_fast!(obs::AbstractVector{Float32}, g::BackgammonGame)
-
-DEPRECATED: Use `observe_minimal!(obs, g)` with 3D array instead.
-"""
-function observe_fast!(obs::AbstractVector{Float32}, g::BackgammonGame)
-    obs3d = reshape(obs, OBS_CHANNELS_MINIMAL, 1, OBS_WIDTH)
-    observe_minimal!(obs3d, g)
-    return obs
-end
-
 # Default observation function
 const vector_observation = observe_full
 

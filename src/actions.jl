@@ -355,7 +355,10 @@ Checks:
 2. At least one ordering of the moves works
 3. Maximize dice rule is respected (uses both dice if possible, higher die if only one)
 
-Note: Complexity is O(num_legal_sources) in the common case, up to O(num_legal_sources²)
+Note: Uses internal buffers (`g._sources_buffer1`, `g._sources_buffer2`) to avoid
+allocations. Not safe to call concurrently on the same game object.
+
+Complexity is O(num_legal_sources) in the common case, up to O(num_legal_sources²)
 when validating the maximize-dice rule. Still faster than generating all legal actions
 for membership testing.
 """
@@ -372,11 +375,23 @@ function is_action_valid(g::BackgammonGame, action_idx::Integer)
 
     loc1, loc2 = decode_action(action_idx)
 
+    # Use internal buffers to avoid allocations
+    buf1 = g._sources_buffer1
+    buf2 = g._sources_buffer2
+
     # Both PASS - only valid if no moves are possible
     if loc1 == PASS_LOC && loc2 == PASS_LOC
-        sources1 = get_legal_source_locs(p0, p1, cp, d1)
-        sources2 = d1 == d2 ? sources1 : get_legal_source_locs(p0, p1, cp, d2)
-        return isempty(sources1) && isempty(sources2)
+        get_legal_source_locs!(buf1, p0, p1, cp, d1)
+        if !isempty(buf1)
+            return false
+        end
+        if d1 != d2
+            get_legal_source_locs!(buf1, p0, p1, cp, d2)
+            if !isempty(buf1)
+                return false
+            end
+        end
+        return true
     end
 
     # Check if move sequence is executable
@@ -444,21 +459,32 @@ function is_action_valid(g::BackgammonGame, action_idx::Integer)
 
     if can_use_d1_only || can_use_d2_only
         # Check if using both dice was possible
-        sources1 = get_legal_source_locs(p0, p1, cp, d1)
-        for s1 in sources1
+        # Copy d1 sources to local since we'll need them later and buf1 gets reused
+        get_legal_source_locs!(buf1, p0, p1, cp, d1)
+        n1 = length(buf1)
+        sources1_copy = MVector{25, Int}(undef)
+        @inbounds for i in 1:n1
+            sources1_copy[i] = buf1[i]
+        end
+
+        for i in 1:n1
+            s1 = sources1_copy[i]
             p0_n, p1_n = apply_move_internal(p0, p1, cp, s1, d1)
             d2_val = d1 == d2 ? d1 : d2
-            sub = get_legal_source_locs(p0_n, p1_n, cp, d2_val)
-            if !isempty(sub)
+            get_legal_source_locs!(buf2, p0_n, p1_n, cp, d2_val)
+            if !isempty(buf2)
                 return false  # Could use both dice, but action only uses one
             end
         end
+
         if d1 != d2
-            sources2 = get_legal_source_locs(p0, p1, cp, d2)
-            for s2 in sources2
+            get_legal_source_locs!(buf1, p0, p1, cp, d2)
+            n2 = length(buf1)
+            for i in 1:n2
+                s2 = buf1[i]
                 p0_n, p1_n = apply_move_internal(p0, p1, cp, s2, d2)
-                sub = get_legal_source_locs(p0_n, p1_n, cp, d1)
-                if !isempty(sub)
+                get_legal_source_locs!(buf2, p0_n, p1_n, cp, d1)
+                if !isempty(buf2)
                     return false  # Could use both dice, but action only uses one
                 end
             end
@@ -466,8 +492,16 @@ function is_action_valid(g::BackgammonGame, action_idx::Integer)
 
         # Only one die can be used - check higher die rule for non-doubles
         if d1 != d2
-            other_die_sources = can_use_d1_only ? get_legal_source_locs(p0, p1, cp, d2) : sources1
-            if !isempty(other_die_sources)
+            if can_use_d1_only
+                get_legal_source_locs!(buf1, p0, p1, cp, d2)
+            end
+            # else: buf1 already has d1 sources from above (but we overwrote it)
+            # Need to re-check
+            if can_use_d2_only
+                get_legal_source_locs!(buf1, p0, p1, cp, d1)
+            end
+
+            if !isempty(buf1)
                 # Both single-die options exist, must use higher
                 higher_is_d1 = d1 > d2
                 if (can_use_d1_only && !higher_is_d1) || (can_use_d2_only && higher_is_d1)
