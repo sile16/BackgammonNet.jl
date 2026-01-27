@@ -80,6 +80,7 @@ Mutable game state for backgammon, using bitboard representation.
 
 # Internal Buffers (pre-allocated to reduce GC pressure)
 - `_actions_buffer`: Buffer for legal action generation
+- `_actions_cached`: Whether `_actions_buffer` contains valid cached actions
 - `_sources_buffer1`, `_sources_buffer2`: Buffers for source location lookups
 """
 mutable struct BackgammonGame
@@ -93,6 +94,7 @@ mutable struct BackgammonGame
     history::Vector{Int}
     doubles_only::Bool # If true, all dice rolls are doubles
     _actions_buffer::Vector{Int}    # Pre-allocated buffer for legal_actions (reduces GC)
+    _actions_cached::Bool           # True if _actions_buffer contains valid cached actions
     _sources_buffer1::Vector{Int}   # Pre-allocated buffer for source locations
     _sources_buffer2::Vector{Int}   # Second buffer for nested source lookups
 end
@@ -128,12 +130,12 @@ end
 
 function BackgammonGame(p0, p1, dice, remaining, cp, term, rew)
     history, actions_buf, src_buf1, src_buf2 = _create_game_buffers()
-    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, actions_buf, src_buf1, src_buf2)
+    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, actions_buf, false, src_buf1, src_buf2)
 end
 
 function BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history)
     _, actions_buf, src_buf1, src_buf2 = _create_game_buffers()
-    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, actions_buf, src_buf1, src_buf2)
+    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, actions_buf, false, src_buf1, src_buf2)
 end
 
 Base.show(io::IO, g::BackgammonGame) = print(io, "BackgammonGame(p=$(g.current_player), dice=$(g.dice))")
@@ -274,6 +276,7 @@ function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing
     g.terminated = false
     g.reward = 0.0f0
     g.doubles_only = doubles_only
+    g._actions_cached = false  # Invalidate legal actions cache
     empty!(g.history)
     sizehint!(g.history, HISTORY_BUFFER_SIZE)
     return g
@@ -444,6 +447,7 @@ function initial_state(; first_player::Union{Nothing, Integer}=nothing,
         history,
         doubles_only,
         actions_buf,
+        false,  # _actions_cached
         src_buf1,
         src_buf2
     )
@@ -487,6 +491,7 @@ function switch_turn!(g::BackgammonGame)
     g.current_player = 1 - g.current_player
     g.dice = SVector{2, Int8}(0, 0)  # Zero dice indicates chance node (waiting for roll)
     g.remaining_actions = 1  # Placeholder; overwritten by apply_chance!
+    g._actions_cached = false  # Invalidate cache (player changed)
 end
 
 # --- Chance / Stochastic Interface ---
@@ -525,6 +530,9 @@ function apply_action!(g::BackgammonGame, action_idx::Integer)
     if is_chance_node(g)
         error("Cannot apply deterministic action on a chance node. Use apply_chance! or sample_chance!")
     end
+
+    # Invalidate legal actions cache (state is about to change)
+    g._actions_cached = false
 
     # Validate action - controlled by ENABLE_SANITY_CHECKS for performance
     @static if ENABLE_SANITY_CHECKS
@@ -607,6 +615,7 @@ function apply_chance!(g::BackgammonGame, outcome_idx::Integer)
     d1, d2 = DICE_OUTCOMES[outcome_idx]
     g.dice = SVector{2, Int8}(Int8(d1), Int8(d2))
     g.remaining_actions = (d1 == d2) ? 2 : 1
+    g._actions_cached = false  # Invalidate legal actions cache (new dice)
 end
 
 function sample_chance!(g::BackgammonGame, rng::AbstractRNG=Random.default_rng())

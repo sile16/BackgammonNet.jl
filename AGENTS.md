@@ -166,21 +166,24 @@ The dice encoding uses 2 one-hot slots (12 channels) + 4-bin move count one-hot 
 **Move count encoding semantics:**
 - **Doubles**: Compute exact playable moves (1-4) and activate corresponding bin
   - "Strong doubles" (4 moves) vs "weak/blocked doubles" (1-3 moves) are now distinguishable
-- **Non-doubles**: Default to bin 2 (2 moves) without expensive legal-move check
-  - Network can infer blocking from board state; keeps training fast
+- **Non-doubles**: Compute exact playable moves (0, 1, or 2) and activate corresponding bin
+  - Uses cached `legal_actions` result (see MCTS Integration section below)
 - **Chance node** (no dice): All bins zero
 - **Completely blocked** (0 moves): All bins zero
 
 **Why 4-bin one-hot over single doubles flag?**
 - More explicit representation: network knows exact move count (1, 2, 3, or 4)
 - Distinguishes "strong doubles" from "blocked doubles" more explicitly
+- Also distinguishes "both dice playable" from "only 1 die playable" for non-doubles
 - Only 3 extra channels (16 total vs 13 for old encoding)
-- Performance optimization: non-doubles skip expensive `legal_actions` computation
+- Performance: uses cached `legal_actions` result (no redundant computation)
 
-**Why compute "playable dice" precisely for doubles?**
-- "Blocked doubles" occur when the player is primed/trapped and can't use all 4 dice
-- Computing actual playability requires simulating moves via `_compute_playable_dice_doubles`
-- Optional `actions` parameter in `observe_*` functions avoids recomputing `legal_actions` when caller already has them
+**Why compute "playable dice" precisely?**
+- **Doubles:** "Blocked doubles" occur when the player is primed/trapped and can't use all 4 dice
+  - Computing actual playability requires simulating moves via `_compute_playable_dice_doubles`
+- **Non-doubles:** Blocking situations where only 1 die (or 0) can be played
+  - `_compute_playable_dice_non_doubles` checks legal actions for PASS slots
+- Both functions use cached `legal_actions` result via MCTS integration (see below)
 
 ### Test Utilities (`test/runtests.jl`)
 
@@ -215,6 +218,42 @@ This abstracts away the physical bitboard layout for easier test writing.
 - Alternative: Track max_usage per-action during generation (more complex code)
 - Current approach prioritizes correctness and maintainability over micro-optimization
 - For RL training, actions are typically sampled from policy, not enumerated
+
+### MCTS Integration & Legal Actions Caching
+
+When used with AlphaZero.jl MCTS, the call sequence during simulation is:
+
+1. **`current_state`** (observation): Called at every node visit to get state for tree lookup
+2. **`is_chance_node`**: Check node type
+3. **Decision node path:**
+   - `available_actions` → calls `legal_actions(g)` on every visit (HOTSPOT)
+   - Action selected, then `play!` → calls `apply_action!(g, action)`
+4. **Chance node path:**
+   - `chance_outcomes(g)` called
+   - Game cloned, `apply_chance!(game, outcome)` applied
+5. **`vectorize_state`** (neural network input): Called only once per node during expansion
+
+**Performance design decisions:**
+
+**Legal actions caching:**
+- `legal_actions()` is cached in `g._actions_buffer` with `g._actions_cached` flag
+- Cache is invalidated in `apply_action!`, `apply_chance!`, `switch_turn!`, and `reset!`
+- Subsequent calls return cached buffer until state changes
+- This is critical since `available_actions` is called on every MCTS visit
+
+**Why cache in game object, not state:**
+- The State object (returned by `current_state`) is used as a Dictionary key in MCTS trees
+- If cached actions were in State, hashing/equality would become slow and memory would explode
+- Cache in mutable Game object, invalidate on state changes
+
+**Observation using cached actions:**
+- `observe_minimal/full/biased` can call `legal_actions(g)` internally
+- Since `available_actions` is called BEFORE `vectorize_state` in MCTS, the cache is already warm
+- No duplicate computation: observation functions hit the cached result
+
+**Clone behavior:**
+- Cloning mainly happens at Chance nodes where decision-move cache is empty
+- This avoids copying large action lists during stochastic branching
 
 ---
 

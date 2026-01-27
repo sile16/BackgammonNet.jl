@@ -13,6 +13,69 @@ const IDX_P1_BAR = 27
 const PASS = PASS_LOC
 const BAR = BAR_LOC
 
+# ============================================================================
+# Observation Channel Constants for Tests
+# ============================================================================
+# These constants define the observation tensor layout. If the representation
+# changes in the future, only these constants need to be updated.
+#
+# Observation shape: (channels, 1, width)
+# Width: 26 = [MyBar, Point1-24, OppBar]
+
+"""
+Observation channel layout constants for test assertions.
+Centralizes channel indices so tests don't break if layout changes.
+"""
+module ObsChannels
+    # Board encoding: threshold encoding (>=1, >=2, >=3, >=4, >=5, 6+)
+    const MY_CHECKER_START = 1      # Channels 1-6: my checker thresholds
+    const MY_CHECKER_END = 6
+    const OPP_CHECKER_START = 7     # Channels 7-12: opponent checker thresholds
+    const OPP_CHECKER_END = 12
+
+    # Dice encoding: 2 one-hot slots (high die, low die)
+    const DICE_SLOT0_START = 13     # Channels 13-18: high die (values 1-6)
+    const DICE_SLOT0_END = 18
+    const DICE_SLOT1_START = 19     # Channels 19-24: low die (values 1-6)
+    const DICE_SLOT1_END = 24
+
+    # Move count encoding: 4-bin one-hot (bins 1, 2, 3, 4)
+    const MOVE_COUNT_START = 25     # Channels 25-28: move count bins
+    const MOVE_COUNT_END = 28
+    const MOVE_BIN_1 = 25           # 1 move playable
+    const MOVE_BIN_2 = 26           # 2 moves playable
+    const MOVE_BIN_3 = 27           # 3 moves playable
+    const MOVE_BIN_4 = 28           # 4 moves playable
+
+    # Off counts
+    const MY_OFF = 29               # Channel 29: my borne-off count (/15)
+    const OPP_OFF = 30              # Channel 30: opponent borne-off count (/15)
+
+    # Minimal observation total channels
+    const MINIMAL_CHANNELS = 30
+
+    # Helper: get channel for dice slot 0 (high die) given die value 1-6
+    dice_slot0_channel(die_value::Int) = DICE_SLOT0_START - 1 + die_value  # 13-18
+
+    # Helper: get channel for dice slot 1 (low die) given die value 1-6
+    dice_slot1_channel(die_value::Int) = DICE_SLOT1_START - 1 + die_value  # 19-24
+
+    # Helper: get move count bin channel given move count 1-4
+    move_bin_channel(move_count::Int) = MOVE_COUNT_START - 1 + move_count  # 25-28
+end
+
+# Spatial layout constants
+module ObsSpatial
+    const WIDTH = 26                # Total spatial width
+    const MY_BAR = 1                # Index 1: my bar
+    const POINT_START = 2           # Indices 2-25: points 1-24
+    const POINT_END = 25
+    const OPP_BAR = 26              # Index 26: opponent bar
+
+    # Helper: get spatial index for board point 1-24
+    point_index(pt::Int) = pt + 1   # Point 1 → index 2, Point 24 → index 25
+end
+
 function make_test_game(; board=nothing, dice=(1, 2), remaining=1, current_player=0)
     # Parse Canonical Board Vector into Bitboards
     p0 = UInt128(0)
@@ -1151,7 +1214,7 @@ end
         # Dice slots always show rolled values (high, low)
         # Move count: bins 1, 2, 3, 4 moves
 
-        # Non-doubles: dice (3, 5) - show both dice, bin 2 active (default 2 moves)
+        # Non-doubles: dice (3, 5) - show both dice, bin 2 active (2 moves playable)
         b = zeros(MVector{28, Int8})
         b[1] = 2
         g = make_test_game(board=b, dice=(3, 5), current_player=0)
@@ -1175,7 +1238,7 @@ end
 
         # Move count for non-doubles: bin 2 active (channel 26)
         @test obs[25, 1, 1] == 0.0f0  # Bin 1
-        @test obs[26, 1, 1] == 1.0f0  # Bin 2 (default for non-doubles)
+        @test obs[26, 1, 1] == 1.0f0  # Bin 2 (both dice playable)
         @test obs[27, 1, 1] == 0.0f0  # Bin 3
         @test obs[28, 1, 1] == 0.0f0  # Bin 4
 
@@ -1272,6 +1335,80 @@ end
         g_blocked = make_test_game(board=b_blocked, dice=(3, 3), remaining=2, current_player=0)
         obs_blocked = observe_minimal(g_blocked)
         @test all(obs_blocked[25:28, 1, 1] .== 0.0f0)  # All bins 0 for completely blocked
+    end
+
+    @testset "Move Count - Non-Doubles Playable Dice" begin
+        # Test that non-doubles correctly compute playable dice count
+        # Previously, non-doubles always defaulted to bin 2 (2 moves)
+        # Now we compute the actual playable count
+
+        # Use ObsChannels constants for maintainability
+        BIN_1 = ObsChannels.MOVE_BIN_1
+        BIN_2 = ObsChannels.MOVE_BIN_2
+
+        # Case 1: Both dice playable - bin 2
+        # Checker at point 1 with dice (5, 3), both moves possible
+        b_both = zeros(MVector{28, Int8})
+        b_both[1] = 2  # 2 checkers at point 1
+        g_both = make_test_game(board=b_both, dice=(5, 3), remaining=1, current_player=0)
+        obs_both = observe_minimal(g_both)
+        @test obs_both[BIN_1, 1, 1] == 0.0f0  # Bin 1 inactive
+        @test obs_both[BIN_2, 1, 1] == 1.0f0  # Bin 2 active (2 dice playable)
+
+        # Case 2: Only 1 die playable (only high die works) - bin 1
+        # Checker at point 5, dice (6, 3)
+        # Low die blocked: 5+3=8 blocked
+        # High die: 5+6=11 open, but then 11+3=14 blocked
+        # Result: only high die playable → bin 1
+        b_high_only = zeros(MVector{28, Int8})
+        b_high_only[5] = 1    # My checker at point 5
+        b_high_only[8] = -2   # Block at 8 (blocks low die: 5→8)
+        b_high_only[14] = -2  # Block at 14 (blocks low die after high: 11→14)
+        g_high_only = make_test_game(board=b_high_only, dice=(6, 3), remaining=1, current_player=0)
+        obs_high_only = observe_minimal(g_high_only)
+        @test obs_high_only[BIN_1, 1, 1] == 1.0f0  # Bin 1 active (only 1 die playable)
+        @test obs_high_only[BIN_2, 1, 1] == 0.0f0  # Bin 2 inactive
+
+        # Case 3: Only 1 die playable (only low die works) - bin 1
+        # Checker at point 2, dice (6, 3)
+        # High die blocked: 2+6=8 blocked
+        # Low die: 2+3=5 open, but then 5+6=11 blocked
+        # Result: only low die playable → bin 1
+        b_low_only = zeros(MVector{28, Int8})
+        b_low_only[2] = 1    # My checker at point 2
+        b_low_only[8] = -2   # Block at 8 (blocks high die: 2→8)
+        b_low_only[11] = -2  # Block at 11 (blocks high die after low: 5→11)
+        g_low_only = make_test_game(board=b_low_only, dice=(6, 3), remaining=1, current_player=0)
+        obs_low_only = observe_minimal(g_low_only)
+        @test obs_low_only[BIN_1, 1, 1] == 1.0f0  # Bin 1 active (only 1 die playable)
+        @test obs_low_only[BIN_2, 1, 1] == 0.0f0  # Bin 2 inactive
+
+        # Case 4: 0 dice playable (completely blocked non-doubles) - all bins 0
+        # Checker on bar, entry points blocked
+        b_nd_blocked = zeros(MVector{28, Int8})
+        b_nd_blocked[25] = 1   # My checker on bar
+        b_nd_blocked[3] = -2   # Block point 3 (entry for die 3)
+        b_nd_blocked[5] = -2   # Block point 5 (entry for die 5)
+        g_nd_blocked = make_test_game(board=b_nd_blocked, dice=(5, 3), remaining=1, current_player=0)
+        obs_nd_blocked = observe_minimal(g_nd_blocked)
+        # All move count bins should be 0
+        @test all(obs_nd_blocked[ObsChannels.MOVE_COUNT_START:ObsChannels.MOVE_COUNT_END, 1, 1] .== 0.0f0)
+
+        # Case 5: Using one die blocks the other - still bin 2 if both can be used somehow
+        # This tests the "must use higher die" rule interaction
+        # Checker at 20 (close to bearing off), dice (6, 2)
+        # Can bear off with 6, or move 20→22 with 2
+        # If we use 6 first, we bear off and can't use 2
+        # If we use 2 first (20→22), we can then bear off with 6 (22→off)
+        # Per rules, if using both is possible (in either order), we must use both
+        # So this should be bin 2
+        b_bearoff = zeros(MVector{28, Int8})
+        b_bearoff[20] = 1   # My checker at point 20 (5 away from off)
+        b_bearoff[21] = 1   # Another checker at 21
+        g_bearoff = make_test_game(board=b_bearoff, dice=(6, 2), remaining=1, current_player=0)
+        obs_bearoff = observe_minimal(g_bearoff)
+        # Should be able to use both dice in correct order
+        @test obs_bearoff[BIN_2, 1, 1] == 1.0f0  # Bin 2 active
     end
 
     @testset "Off Counts Encoding" begin
@@ -2405,7 +2542,7 @@ end
         # High die = 4 at channel 12+4=16, Low die = 3 at channel 18+3=21
         @test obs2[16, 1, 1] == 1.0f0  # High die 4
         @test obs2[21, 1, 1] == 1.0f0  # Low die 3
-        # Move count bin 2 active (non-doubles default to 2 moves)
+        # Move count bin 2 active (non-doubles: both dice playable)
         @test obs2[26, 1, 1] == 1.0f0  # Bin 2 active
 
         # Test with d1=0 (partial invalid state)

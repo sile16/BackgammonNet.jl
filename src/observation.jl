@@ -58,8 +58,7 @@ const BAR_PIP_VALUE = 25          # Pip value for checkers on bar
 #   - 4-bin one-hot encoding for number of moves this turn (1, 2, 3, or 4)
 #   - Allows network to distinguish "strong doubles" (4 moves) from "weak doubles" (3 moves)
 #   - Doubles: Compute exact playable moves (1-4) and activate corresponding bin
-#   - Non-doubles: Default to bin 2 (2 moves) without expensive legal-move check
-#     (network can infer blocking from board state; keeps training fast)
+#   - Non-doubles: Compute exact playable moves (0, 1, or 2) and activate corresponding bin
 #   - Chance node (no dice): All bins zero
 #   - Completely blocked (0 moves): All bins zero
 #
@@ -291,6 +290,51 @@ function _compute_playable_dice_doubles(g::BackgammonGame, actions::Union{Nothin
 end
 
 """
+    _compute_playable_dice_non_doubles(g::BackgammonGame, actions=nothing) -> Int
+
+Compute playable dice count for non-doubles (0, 1, or 2).
+Returns 0 if doubles or no dice rolled.
+
+For non-doubles, actions encode (high_die_loc, low_die_loc) where PASS_LOC
+indicates that die wasn't used. We check:
+- If any action uses both dice (neither is PASS) → 2 playable
+- If all actions have at least one PASS but some move exists → 1 playable
+- If only PASS|PASS available → 0 playable
+
+Uses optional pre-computed `actions` to avoid duplicate legal_actions computation.
+"""
+function _compute_playable_dice_non_doubles(g::BackgammonGame, actions::Union{Nothing, Vector{Int}}=nothing)
+    d1, d2 = g.dice[1], g.dice[2]
+
+    # Not applicable for doubles or chance node
+    if d1 == d2 || d1 == 0 || d2 == 0
+        return 0
+    end
+
+    # Get legal actions (reuse if provided)
+    acts = actions === nothing ? legal_actions(g) : actions
+
+    # Check actions to determine playable count
+    has_any_move = false
+    for act in acts
+        l1, l2 = decode_action(act)
+
+        if l1 != PASS_LOC && l2 != PASS_LOC
+            # Both dice used → 2 playable
+            return 2
+        elseif l1 != PASS_LOC || l2 != PASS_LOC
+            # At least one die used
+            has_any_move = true
+        end
+        # l1 == PASS_LOC && l2 == PASS_LOC → 0 dice in this action
+    end
+
+    # If we found moves but none used both dice → 1 playable
+    # If no moves found (only PASS|PASS) → 0 playable
+    return has_any_move ? 1 : 0
+end
+
+"""
     _get_original_dice_sum(g::BackgammonGame) -> Int
 
 Get sum of original dice roll (before any moves).
@@ -313,7 +357,7 @@ Each slot gets 6 channels for values 1-6. All zeros if at chance node.
 
 Move count is a 4-bin one-hot encoding (bins 1, 2, 3, 4):
 - Doubles: Compute exact playable moves (1-4) and activate corresponding bin
-- Non-doubles: Default to bin 2 (2 moves) without expensive legal-move check
+- Non-doubles: Compute exact playable moves (0, 1, or 2) and activate corresponding bin
 - Chance node or 0 moves: All bins zero
 
 Optional `actions` parameter avoids recomputing legal_actions if already available.
@@ -342,7 +386,7 @@ function _encode_dice!(obs::AbstractArray{Float32,3}, g::BackgammonGame,
     if high > 0
         move_count = 0
         if high == low
-            # Doubles: compute exact playable moves
+            # Doubles: compute exact playable moves (0-4)
             if g.remaining_actions == 2
                 move_count = _compute_playable_dice_doubles(g, actions)
             else
@@ -350,8 +394,8 @@ function _encode_dice!(obs::AbstractArray{Float32,3}, g::BackgammonGame,
                 move_count = 2
             end
         else
-            # Non-doubles: default to 2 moves (skip expensive legality check)
-            move_count = 2
+            # Non-doubles: compute exact playable moves (0, 1, or 2)
+            move_count = _compute_playable_dice_non_doubles(g, actions)
         end
 
         # Activate corresponding bin (1-4 maps to channels 25-28)

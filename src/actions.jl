@@ -197,10 +197,16 @@ Action encoding: `action = loc1*26 + loc2 + 1` where locations are 0-25
 (0=bar, 1-24=points, 25=pass). Use `decode_action(action)` to get `(loc1, loc2)`.
 
 Note: Returns a reference to an internal buffer. Do not mutate the returned vector.
+The result is cached until the game state changes; subsequent calls return the cached buffer.
 """
 function legal_actions(g::BackgammonGame)
     if is_chance_node(g)
         return CHANCE_ACTIONS  # Always return all 21 indices; use chance_outcomes() for probabilities
+    end
+
+    # Return cached result if available
+    if g._actions_cached
+        return g._actions_buffer
     end
 
     d1 = Int(g.dice[1])
@@ -288,7 +294,10 @@ function legal_actions(g::BackgammonGame)
     unique!(actions)
 
     if isempty(actions)
-        return PASS_PASS_ACTION
+        # Add PASS|PASS to the buffer so caching works correctly
+        push!(actions, PASS_PASS_ACTION[1])
+        g._actions_cached = true
+        return actions
     end
 
     # Filter by max usage - avoid allocating intermediate array
@@ -330,6 +339,7 @@ function legal_actions(g::BackgammonGame)
     end
     # max_usage == 0: keep all (all are PASS|PASS)
 
+    g._actions_cached = true
     return actions
 end
 
