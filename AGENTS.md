@@ -87,7 +87,7 @@ A game starts at a chance node (dice = [0,0]). Call `sample_chance!` or use `ste
 ### Key Files
 - `src/game.jl`: `BackgammonGame` struct, move application, termination/scoring, bitboard helpers
 - `src/actions.jl`: `legal_actions`, action encoding/decoding, move generation with forced-move rules
-- `src/observation.jl`: `vector_observation` (86-dim) and `observe_fast` (34-dim) for neural network input
+- `src/observation.jl`: 3-tier observation system: `observe_minimal` (38ch), `observe_full` (69ch), `observe_biased` (129ch)
 
 ### Game Rules Enforced
 - Bar entry priority (must enter from bar before moving other pieces)
@@ -122,14 +122,19 @@ A game starts at a chance node (dice = [0,0]). Call `sample_chance!` or use `ste
 - This is acceptable since the error propagates and the game state is unusable anyway
 - Callers catching errors should treat the game as corrupted
 
-### Observation Code Duplication
+### Observation System (3-Tier)
 
-The observation functions appear duplicated but serve different purposes:
-- `observe_fast` / `observe_full`: Allocating versions for convenience
-- `observe_fast!` / `observe_full!`: In-place versions for high-throughput scenarios
+Three observation tiers with increasing feature complexity (shape: `C × 1 × 25`):
 
-This is an intentional performance pattern. For MCTS or batch evaluation, use the in-place versions
-with pre-allocated buffers to avoid GC pressure.
+| Tier | Channels | Content |
+|------|----------|---------|
+| `observe_minimal` | 38 | Raw board (threshold 1-6+) + dice (one-hot 4×6) + off counts |
+| `observe_full` | 69 | + arithmetic features (pips, contact, stragglers, remaining) |
+| `observe_biased` | 129 | + strategic features (primes, anchors, blots, builders) |
+
+**Hierarchy property:** Each tier extends the previous (`full[1:38] == minimal`, `biased[1:69] == full`).
+
+**In-place versions:** `observe_minimal!`, `observe_full!`, `observe_biased!` for high-throughput scenarios (MCTS, batch eval) to avoid GC pressure.
 
 ### Performance Tradeoffs in legal_actions
 

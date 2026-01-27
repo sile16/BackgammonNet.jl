@@ -90,8 +90,18 @@ Player actions are integers 1-676, encoding two source locations for the two dic
 - `is_chance_node(g)`: Returns true if waiting for dice roll.
 - `chance_outcomes(g)`: Returns `[(outcome_idx, prob), ...]`. In `doubles_only` mode, keeps 21 entries with 0 probability for non-doubles.
 
-### Observation
-- `vector_observation(g)`: AlphaZero-compatible feature vector.
+### Observation (3-Tier System)
+Three observation tiers with increasing feature complexity (shape: `C × 1 × 25`):
+
+| Function | Channels | Description |
+|----------|----------|-------------|
+| `observe_minimal(g)` | 38 | Raw board (threshold encoded) + dice (one-hot) + off counts |
+| `observe_full(g)` | 69 | + arithmetic features (pips, contact, can_bear_off, etc.) |
+| `observe_biased(g)` | 129 | + strategic features (primes, anchors, blots, builders) |
+
+Each tier builds on the previous: `full[1:38] == minimal`, `biased[1:69] == full`.
+
+In-place versions available: `observe_minimal!`, `observe_full!`, `observe_biased!`.
 
 ### Initialization Options
 - `first_player`: Set to `0` or `1` to choose starting player, or `nothing` for random.
