@@ -3,9 +3,9 @@
 # ============================================================================
 #
 # Provides three observation types that build on each other:
-#   - Minimal (27 channels): Raw board + dice only
-#   - Full (59 channels): + arithmetic features (no strategic bias)
-#   - Biased (119 channels): + hand-crafted strategic features
+#   - Minimal (30 channels): Raw board + dice + move count + off counts
+#   - Full (62 channels): + arithmetic features (no strategic bias)
+#   - Biased (122 channels): + hand-crafted strategic features
 #
 # Shape: (C, 1, 26) where width = 2 bars + 24 board points
 #
@@ -25,9 +25,9 @@
 const OBS_WIDTH = 26  # My bar at 1, points 1-24 at 2-25, opponent bar at 26
 
 # Channel counts for each tier
-const OBS_CHANNELS_MINIMAL = 27   # 12 board + 13 dice (2 slots + flag) + 2 off
-const OBS_CHANNELS_FULL = 59      # 27 minimal + 32 full features (28-59)
-const OBS_CHANNELS_BIASED = 119   # 59 full + 60 biased features (60-119)
+const OBS_CHANNELS_MINIMAL = 30   # 12 board + 12 dice (2 slots) + 4 move count + 2 off
+const OBS_CHANNELS_FULL = 62      # 30 minimal + 32 full features (31-62)
+const OBS_CHANNELS_BIASED = 122   # 62 full + 60 biased features (63-122)
 
 # --- Normalization Constants ---
 const OFF_NORM = 15.0f0           # Max checkers per player
@@ -45,49 +45,49 @@ const BAR_PIP_VALUE = 25          # Pip value for checkers on bar
 # Channel Layout Documentation (1-indexed)
 # ============================================================================
 #
-# MINIMAL (27 channels, 1-27):
+# MINIMAL (30 channels, 1-30):
 #   1-6:   My checker thresholds (>=1, >=2, >=3, >=4, >=5, 6+)
 #   7-12:  Opponent checker thresholds
 #   13-18: Dice slot 0 one-hot (high die, values 1-6)
 #   19-24: Dice slot 1 one-hot (low die, values 1-6)
-#   25:    Doubles flag (see below)
-#   26:    My off count (/15)
-#   27:    Opponent off count (/15)
+#   25-28: Move count one-hot (bins 1, 2, 3, 4 moves)
+#   29:    My off count (/15)
+#   30:    Opponent off count (/15)
 #
-# Dice Encoding Design Philosophy:
-#   - Always show the rolled dice values (high-to-low order)
-#   - Network learns current move legality from action mask
-#   - Doubles flag indicates "meaningful second action coming":
-#     * 1 if: doubles AND first action AND 3+ dice playable
-#     * 0 if: non-doubles, OR second action of doubles, OR blocked doubles
-#   - "Blocked doubles" = only 1-2 of 4 dice can be played (primed/trapped)
-#   - Computing playable dice requires simulating moves (precise, not proxy)
+# Move Count Encoding Design Philosophy:
+#   - 4-bin one-hot encoding for number of moves this turn (1, 2, 3, or 4)
+#   - Allows network to distinguish "strong doubles" (4 moves) from "weak doubles" (3 moves)
+#   - Doubles: Compute exact playable moves (1-4) and activate corresponding bin
+#   - Non-doubles: Default to bin 2 (2 moves) without expensive legal-move check
+#     (network can infer blocking from board state; keeps training fast)
+#   - Chance node (no dice): All bins zero
+#   - Completely blocked (0 moves): All bins zero
 #
-# FULL adds 32 channels (28-59):
-#   28:    dice_sum (/12)
-#   29:    dice_delta |d1-d2| (/5)
-#   30:    Contact indicator (1=contact, 0=race)
-#   31:    My pip count (/167)
-#   32:    Opponent pip count (/167)
-#   33:    Pip difference (my-opp, /167, clipped [-1,1])
-#   34:    Can bear off (me)
-#   35:    Can bear off (opponent)
-#   36-41: My stragglers (outside home) threshold
-#   42-47: Opponent stragglers threshold
-#   48-53: My remaining (15-off) threshold
-#   54-59: Opponent remaining threshold
+# FULL adds 32 channels (31-62):
+#   31:    dice_sum (/12)
+#   32:    dice_delta |d1-d2| (/5)
+#   33:    Contact indicator (1=contact, 0=race)
+#   34:    My pip count (/167)
+#   35:    Opponent pip count (/167)
+#   36:    Pip difference (my-opp, /167, clipped [-1,1])
+#   37:    Can bear off (me)
+#   38:    Can bear off (opponent)
+#   39-44: My stragglers (outside home) threshold
+#   45-50: Opponent stragglers threshold
+#   51-56: My remaining (15-off) threshold
+#   57-62: Opponent remaining threshold
 #
-# BIASED adds 60 channels (60-119):
-#   60-65:   My prime length threshold
-#   66-71:   Opponent prime length threshold
-#   72-77:   My home board blocks threshold
-#   78-83:   Opponent home board blocks threshold
-#   84-89:   My anchors (in opponent's home) threshold
-#   90-95:   Opponent anchors threshold
-#   96-101:  My blot count threshold
-#   102-107: Opponent blot count threshold
-#   108-113: My builder count threshold
-#   114-119: Opponent builder count threshold
+# BIASED adds 60 channels (63-122):
+#   63-68:   My prime length threshold
+#   69-74:   Opponent prime length threshold
+#   75-80:   My home board blocks threshold
+#   81-86:   Opponent home board blocks threshold
+#   87-92:   My anchors (in opponent's home) threshold
+#   93-98:   Opponent anchors threshold
+#   99-104:  My blot count threshold
+#   105-110: Opponent blot count threshold
+#   111-116: My builder count threshold
+#   117-122: Opponent builder count threshold
 #
 # ============================================================================
 
@@ -306,13 +306,15 @@ end
 """
     _encode_dice!(obs, g, actions=nothing)
 
-Encode dice using 2 one-hot slots (channels 13-24) + doubles flag (channel 25).
+Encode dice using 2 one-hot slots (channels 13-24) + move count (channels 25-28).
 
 Slots are ordered high-to-low (largest die value first).
 Each slot gets 6 channels for values 1-6. All zeros if at chance node.
 
-Doubles flag = 1 if: doubles AND first action AND 3+ dice playable.
-Doubles flag = 0 if: non-doubles, OR second action, OR blocked doubles (<3 dice).
+Move count is a 4-bin one-hot encoding (bins 1, 2, 3, 4):
+- Doubles: Compute exact playable moves (1-4) and activate corresponding bin
+- Non-doubles: Default to bin 2 (2 moves) without expensive legal-move check
+- Chance node or 0 moves: All bins zero
 
 Optional `actions` parameter avoids recomputing legal_actions if already available.
 """
@@ -336,17 +338,32 @@ function _encode_dice!(obs::AbstractArray{Float32,3}, g::BackgammonGame,
         end
     end
 
-    # Doubles flag: channel 25
-    # 1 if doubles AND first action AND 3+ dice playable
-    if high > 0 && high == low && g.remaining_actions == 2
-        playable = _compute_playable_dice_doubles(g, actions)
-        if playable >= 3
+    # Move count one-hot: channels 25-28 (bins 1, 2, 3, 4)
+    if high > 0
+        move_count = 0
+        if high == low
+            # Doubles: compute exact playable moves
+            if g.remaining_actions == 2
+                move_count = _compute_playable_dice_doubles(g, actions)
+            else
+                # Second action of doubles: 2 moves remaining
+                move_count = 2
+            end
+        else
+            # Non-doubles: default to 2 moves (skip expensive legality check)
+            move_count = 2
+        end
+
+        # Activate corresponding bin (1-4 maps to channels 25-28)
+        if move_count >= 1 && move_count <= 4
+            ch = 24 + move_count  # 25, 26, 27, or 28
             @inbounds for w in 1:OBS_WIDTH
-                obs[25, 1, w] = 1.0f0
+                obs[ch, 1, w] = 1.0f0
             end
         end
+        # If move_count == 0 (completely blocked), all bins stay 0
     end
-    # Otherwise flag stays 0 (initialized)
+    # Chance node (high == 0): all bins stay 0
 
     return nothing
 end
@@ -354,14 +371,14 @@ end
 """
     _encode_off!(obs, g)
 
-Encode borne-off counts (channels 26-27).
+Encode borne-off counts (channels 29-30).
 """
 function _encode_off!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
     my_off, opp_off = _get_off_counts(g)
 
     @inbounds for w in 1:OBS_WIDTH
-        obs[26, 1, w] = Float32(my_off) / OFF_NORM
-        obs[27, 1, w] = Float32(opp_off) / OFF_NORM
+        obs[29, 1, w] = Float32(my_off) / OFF_NORM
+        obs[30, 1, w] = Float32(opp_off) / OFF_NORM
     end
 
     return nothing
@@ -496,7 +513,7 @@ end
 """
     _encode_full_features!(obs, g)
 
-Encode full observation features (channels 28-59).
+Encode full observation features (channels 31-62).
 Builds on minimal observation.
 """
 function _encode_full_features!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
@@ -507,20 +524,20 @@ function _encode_full_features!(obs::AbstractArray{Float32,3}, g::BackgammonGame
     pip_diff = clamp((feat.my_pips - feat.opp_pips) / PIP_NORM, -1.0f0, 1.0f0)
 
     # Scalar features (broadcast)
-    _broadcast_scalar!(obs, 28, Float32(dice_sum) / DICE_SUM_NORM)
-    _broadcast_scalar!(obs, 29, Float32(dice_delta) / DICE_DELTA_NORM)
-    _broadcast_scalar!(obs, 30, Float32(feat.has_contact))
-    _broadcast_scalar!(obs, 31, Float32(feat.my_pips) / PIP_NORM)
-    _broadcast_scalar!(obs, 32, Float32(feat.opp_pips) / PIP_NORM)
-    _broadcast_scalar!(obs, 33, pip_diff)
-    _broadcast_scalar!(obs, 34, Float32(feat.can_bear_my))
-    _broadcast_scalar!(obs, 35, Float32(feat.can_bear_opp))
+    _broadcast_scalar!(obs, 31, Float32(dice_sum) / DICE_SUM_NORM)
+    _broadcast_scalar!(obs, 32, Float32(dice_delta) / DICE_DELTA_NORM)
+    _broadcast_scalar!(obs, 33, Float32(feat.has_contact))
+    _broadcast_scalar!(obs, 34, Float32(feat.my_pips) / PIP_NORM)
+    _broadcast_scalar!(obs, 35, Float32(feat.opp_pips) / PIP_NORM)
+    _broadcast_scalar!(obs, 36, pip_diff)
+    _broadcast_scalar!(obs, 37, Float32(feat.can_bear_my))
+    _broadcast_scalar!(obs, 38, Float32(feat.can_bear_opp))
 
     # Threshold-encoded counts
-    _encode_threshold_broadcast!(obs, 35, feat.my_stragglers)      # 36-41
-    _encode_threshold_broadcast!(obs, 41, feat.opp_stragglers)     # 42-47
-    _encode_threshold_broadcast!(obs, 47, 15 - feat.my_off)        # 48-53: remaining
-    _encode_threshold_broadcast!(obs, 53, 15 - feat.opp_off)       # 54-59: remaining
+    _encode_threshold_broadcast!(obs, 38, feat.my_stragglers)      # 39-44
+    _encode_threshold_broadcast!(obs, 44, feat.opp_stragglers)     # 45-50
+    _encode_threshold_broadcast!(obs, 50, 15 - feat.my_off)        # 51-56: remaining
+    _encode_threshold_broadcast!(obs, 56, 15 - feat.opp_off)       # 57-62: remaining
 
     return nothing
 end
@@ -614,31 +631,31 @@ end
 """
     _encode_biased_features!(obs, g)
 
-Encode biased/strategic features (channels 60-119).
+Encode biased/strategic features (channels 63-122).
 Builds on full observation.
 """
 function _encode_biased_features!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
     strat = _compute_strategic_features(g)
 
     # Prime length (max 6, no overflow needed)
-    _encode_threshold_capped!(obs, 59, strat.my_prime, 6)       # 60-65
-    _encode_threshold_capped!(obs, 65, strat.opp_prime, 6)      # 66-71
+    _encode_threshold_capped!(obs, 62, strat.my_prime, 6)       # 63-68
+    _encode_threshold_capped!(obs, 68, strat.opp_prime, 6)      # 69-74
 
     # Home board blocks (max 6)
-    _encode_threshold_capped!(obs, 71, strat.my_home_blocks, 6)  # 72-77
-    _encode_threshold_capped!(obs, 77, strat.opp_home_blocks, 6) # 78-83
+    _encode_threshold_capped!(obs, 74, strat.my_home_blocks, 6)  # 75-80
+    _encode_threshold_capped!(obs, 80, strat.opp_home_blocks, 6) # 81-86
 
     # Anchors (max 6)
-    _encode_threshold_capped!(obs, 83, strat.my_anchors, 6)      # 84-89
-    _encode_threshold_capped!(obs, 89, strat.opp_anchors, 6)     # 90-95
+    _encode_threshold_capped!(obs, 86, strat.my_anchors, 6)      # 87-92
+    _encode_threshold_capped!(obs, 92, strat.opp_anchors, 6)     # 93-98
 
     # Blot count (can exceed 6, use overflow)
-    _encode_threshold_broadcast!(obs, 95, strat.my_blots)        # 96-101
-    _encode_threshold_broadcast!(obs, 101, strat.opp_blots)      # 102-107
+    _encode_threshold_broadcast!(obs, 98, strat.my_blots)        # 99-104
+    _encode_threshold_broadcast!(obs, 104, strat.opp_blots)      # 105-110
 
     # Builder count (can exceed 6, use overflow)
-    _encode_threshold_broadcast!(obs, 107, strat.my_builders)    # 108-113
-    _encode_threshold_broadcast!(obs, 113, strat.opp_builders)   # 114-119
+    _encode_threshold_broadcast!(obs, 110, strat.my_builders)    # 111-116
+    _encode_threshold_broadcast!(obs, 116, strat.opp_builders)   # 117-122
 
     return nothing
 end
@@ -650,7 +667,7 @@ end
 """
     observe_minimal(g::BackgammonGame; actions=nothing) -> Array{Float32,3}
 
-Generate minimal observation (27 channels). Shape: (27, 1, 26).
+Generate minimal observation (30 channels). Shape: (30, 1, 26).
 
 The network must learn all strategic concepts from raw state.
 
@@ -658,8 +675,8 @@ The network must learn all strategic concepts from raw state.
 - 1-6: My checker thresholds (>=1, >=2, >=3, >=4, >=5, 6+)
 - 7-12: Opponent checker thresholds
 - 13-24: Dice one-hot (2 slots × 6 values, ordered high-to-low)
-- 25: Doubles flag (1 if doubles AND first action AND 3+ dice playable)
-- 26-27: Off counts (/15)
+- 25-28: Move count one-hot (bins 1, 2, 3, 4 moves)
+- 29-30: Off counts (/15)
 
 # Spatial Dimension (1-indexed, Julia convention)
 Width 26 = [MyBar, Point1, ..., Point24, OppBar]
@@ -682,7 +699,7 @@ end
 """
     observe_minimal!(obs::AbstractArray{Float32,3}, g::BackgammonGame; actions=nothing)
 
-In-place version of `observe_minimal`. Fills channels 1-27.
+In-place version of `observe_minimal`. Fills channels 1-30.
 """
 function observe_minimal!(obs::AbstractArray{Float32,3}, g::BackgammonGame;
                           actions::Union{Nothing, Vector{Int}}=nothing)
@@ -701,19 +718,19 @@ end
 """
     observe_full(g::BackgammonGame; actions=nothing) -> Array{Float32,3}
 
-Generate full observation (59 channels). Shape: (59, 1, 26).
+Generate full observation (62 channels). Shape: (62, 1, 26).
 
 Includes all minimal features plus pre-computed arithmetic features.
 No strategic bias - only saves the network from doing math.
 
-# Additional Channels (beyond minimal, 28-59)
-- 28: dice_sum (/12)
-- 29: dice_delta |d1-d2| (/5)
-- 30: Contact indicator (1=contact, 0=race)
-- 31-33: Pip counts (my, opp, diff)
-- 34-35: Can bear off flags
-- 36-47: Stragglers (outside home) threshold encoded
-- 48-59: Remaining checkers threshold encoded
+# Additional Channels (beyond minimal, 31-62)
+- 31: dice_sum (/12)
+- 32: dice_delta |d1-d2| (/5)
+- 33: Contact indicator (1=contact, 0=race)
+- 34-36: Pip counts (my, opp, diff)
+- 37-38: Can bear off flags
+- 39-50: Stragglers (outside home) threshold encoded
+- 51-62: Remaining checkers threshold encoded
 
 See also: [`observe_minimal`](@ref), [`observe_biased`](@ref)
 """
@@ -726,7 +743,7 @@ end
 """
     observe_full!(obs::AbstractArray{Float32,3}, g::BackgammonGame; actions=nothing)
 
-In-place version of `observe_full`. Fills channels 1-59.
+In-place version of `observe_full`. Fills channels 1-62.
 """
 function observe_full!(obs::AbstractArray{Float32,3}, g::BackgammonGame;
                        actions::Union{Nothing, Vector{Int}}=nothing)
@@ -749,17 +766,17 @@ end
 """
     observe_biased(g::BackgammonGame; actions=nothing) -> Array{Float32,3}
 
-Generate biased observation (119 channels). Shape: (119, 1, 26).
+Generate biased observation (122 channels). Shape: (122, 1, 26).
 
 Includes all full features plus hand-crafted strategic features
 inspired by TD-Gammon and gnubg.
 
-# Additional Channels (beyond full, 60-119)
-- 60-71: Prime length (longest consecutive blocks)
-- 72-83: Home board blocks (trapping power)
-- 84-95: Anchors (blocks in opponent's home)
-- 96-107: Blot count (exposure)
-- 108-119: Builder count (flexibility)
+# Additional Channels (beyond full, 63-122)
+- 63-74: Prime length (longest consecutive blocks)
+- 75-86: Home board blocks (trapping power)
+- 87-98: Anchors (blocks in opponent's home)
+- 99-110: Blot count (exposure)
+- 111-122: Builder count (flexibility)
 
 See also: [`observe_minimal`](@ref), [`observe_full`](@ref)
 """
@@ -772,7 +789,7 @@ end
 """
     observe_biased!(obs::AbstractArray{Float32,3}, g::BackgammonGame; actions=nothing)
 
-In-place version of `observe_biased`. Fills channels 1-119.
+In-place version of `observe_biased`. Fills channels 1-122.
 """
 function observe_biased!(obs::AbstractArray{Float32,3}, g::BackgammonGame;
                          actions::Union{Nothing, Vector{Int}}=nothing)

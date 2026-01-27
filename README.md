@@ -95,16 +95,16 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 26
 
 | Function | Channels | Description |
 |----------|----------|-------------|
-| `observe_minimal(g)` | 38 | Raw board (threshold encoded) + dice (one-hot, high-to-low) + off counts |
-| `observe_full(g)` | 70 | + arithmetic features (dice_sum, dice_delta, pips, contact, etc.) |
-| `observe_biased(g)` | 130 | + strategic features (primes, anchors, blots, builders) |
+| `observe_minimal(g)` | 30 | Raw board (threshold encoded) + dice (2 slots) + move count (4 bins) + off counts |
+| `observe_full(g)` | 62 | + arithmetic features (dice_sum, dice_delta, pips, contact, etc.) |
+| `observe_biased(g)` | 122 | + strategic features (primes, anchors, blots, builders) |
 
 **Spatial Layout (1-indexed, Julia convention):**
 - Index 1: My bar (adjacent to my entry points 1-6 at indices 2-7)
 - Indices 2-25: Points 1-24 in canonical order (entry → home)
 - Index 26: Opponent bar (adjacent to their entry points 19-24 at indices 20-25)
 
-Each tier builds on the previous: `full[1:38] == minimal`, `biased[1:70] == full`.
+Each tier builds on the previous: `full[1:30] == minimal`, `biased[1:62] == full`.
 
 In-place versions available: `observe_minimal!`, `observe_full!`, `observe_biased!`.
 
