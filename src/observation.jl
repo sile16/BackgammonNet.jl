@@ -4,8 +4,8 @@
 #
 # Provides three observation types that build on each other:
 #   - Minimal (38 channels): Raw board + dice only
-#   - Full (69 channels): + arithmetic features (no strategic bias)
-#   - Biased (129 channels): + hand-crafted strategic features
+#   - Full (70 channels): + arithmetic features (no strategic bias)
+#   - Biased (130 channels): + hand-crafted strategic features
 #
 # Shape: (C, 1, 25) where width = 24 board points + 1 bar position
 #
