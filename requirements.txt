@@ -1,0 +1,16 @@
+# Python dependencies for BackgammonNet.jl
+#
+# These are used by test/GnubgInterface.jl for position evaluation
+# and game playing against gnubg's neural network.
+
+# GNU Backgammon Python module (REQUIRED for GnubgInterface)
+# NOT available on PyPI - must be installed separately:
+#   - Linux: Build from source with --enable-python flag
+#     https://www.gnu.org/software/gnubg/
+#   - Or check if your distro has python-gnubg package
+#
+# Verify installation: python -c "import gnubg; print(gnubg)"
+
+# Weights & Biases for experiment tracking (OPTIONAL)
+# Only needed if using init_wandb() for logging matches
+wandb>=0.15.0

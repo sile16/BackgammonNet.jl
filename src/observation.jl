@@ -21,13 +21,14 @@ const OBS_WIDTH = 25  # 24 points + bar at index 25
 
 # Channel counts for each tier
 const OBS_CHANNELS_MINIMAL = 38
-const OBS_CHANNELS_FULL = 69      # 38 minimal + 31 full features (39-69)
-const OBS_CHANNELS_BIASED = 129   # 69 full + 60 biased features (70-129)
+const OBS_CHANNELS_FULL = 70      # 38 minimal + 32 full features (39-70)
+const OBS_CHANNELS_BIASED = 130   # 70 full + 60 biased features (71-130)
 
 # --- Normalization Constants ---
 const OFF_NORM = 15.0f0           # Max checkers per player
 const PIP_NORM = 167.0f0          # Starting pip count (natural scale)
 const DICE_SUM_NORM = 12.0f0      # Max dice sum (6+6)
+const DICE_DELTA_NORM = 5.0f0     # Max dice delta |6-1|
 const OVERFLOW_NORM = 10.0f0      # For 6+ threshold encoding: (n-5)/10
 
 # --- Board Layout Constants ---
@@ -49,30 +50,31 @@ const BAR_PIP_VALUE = 25          # Pip value for checkers on bar
 #   37:    My off count (/15)
 #   38:    Opponent off count (/15)
 #
-# FULL adds 31 channels (39-69):
+# FULL adds 32 channels (39-70):
 #   39:    dice_sum (/12)
-#   40:    Contact indicator (1=contact, 0=race)
-#   41:    My pip count (/167)
-#   42:    Opponent pip count (/167)
-#   43:    Pip difference (my-opp, /167, clipped [-1,1])
-#   44:    Can bear off (me)
-#   45:    Can bear off (opponent)
-#   46-51: My stragglers (outside home) threshold
-#   52-57: Opponent stragglers threshold
-#   58-63: My remaining (15-off) threshold
-#   64-69: Opponent remaining threshold
+#   40:    dice_delta |d1-d2| (/5)
+#   41:    Contact indicator (1=contact, 0=race)
+#   42:    My pip count (/167)
+#   43:    Opponent pip count (/167)
+#   44:    Pip difference (my-opp, /167, clipped [-1,1])
+#   45:    Can bear off (me)
+#   46:    Can bear off (opponent)
+#   47-52: My stragglers (outside home) threshold
+#   53-58: Opponent stragglers threshold
+#   59-64: My remaining (15-off) threshold
+#   65-70: Opponent remaining threshold
 #
-# BIASED adds 60 channels (70-129):
-#   70-75:   My prime length threshold
-#   76-81:   Opponent prime length threshold
-#   82-87:   My home board blocks threshold
-#   88-93:   Opponent home board blocks threshold
-#   94-99:   My anchors (in opponent's home) threshold
-#   100-105: Opponent anchors threshold
-#   106-111: My blot count threshold
-#   112-117: Opponent blot count threshold
-#   118-123: My builder count threshold
-#   124-129: Opponent builder count threshold
+# BIASED adds 60 channels (71-130):
+#   71-76:   My prime length threshold
+#   77-82:   Opponent prime length threshold
+#   83-88:   My home board blocks threshold
+#   89-94:   Opponent home board blocks threshold
+#   95-100:  My anchors (in opponent's home) threshold
+#   101-106: Opponent anchors threshold
+#   107-112: My blot count threshold
+#   113-118: Opponent blot count threshold
+#   119-124: My builder count threshold
+#   125-130: Opponent builder count threshold
 #
 # ============================================================================
 
@@ -365,31 +367,47 @@ function _compute_full_features(g::BackgammonGame)
 end
 
 """
+    _get_dice_delta(g::BackgammonGame) -> Int
+
+Get absolute difference between original dice values.
+Returns 0 if at chance node (no dice rolled).
+"""
+@inline function _get_dice_delta(g::BackgammonGame)
+    d1, d2 = g.dice[1], g.dice[2]
+    if d1 == 0 || d2 == 0
+        return 0
+    end
+    return abs(Int(d1) - Int(d2))
+end
+
+"""
     _encode_full_features!(obs, g)
 
-Encode full observation features (channels 38-69).
+Encode full observation features (channels 39-70).
 Builds on minimal observation.
 """
 function _encode_full_features!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
     feat = _compute_full_features(g)
     dice_sum = _get_original_dice_sum(g)
+    dice_delta = _get_dice_delta(g)
 
     pip_diff = clamp((feat.my_pips - feat.opp_pips) / PIP_NORM, -1.0f0, 1.0f0)
 
     # Scalar features (broadcast)
     _broadcast_scalar!(obs, 39, Float32(dice_sum) / DICE_SUM_NORM)
-    _broadcast_scalar!(obs, 40, Float32(feat.has_contact))
-    _broadcast_scalar!(obs, 41, Float32(feat.my_pips) / PIP_NORM)
-    _broadcast_scalar!(obs, 42, Float32(feat.opp_pips) / PIP_NORM)
-    _broadcast_scalar!(obs, 43, pip_diff)
-    _broadcast_scalar!(obs, 44, Float32(feat.can_bear_my))
-    _broadcast_scalar!(obs, 45, Float32(feat.can_bear_opp))
+    _broadcast_scalar!(obs, 40, Float32(dice_delta) / DICE_DELTA_NORM)
+    _broadcast_scalar!(obs, 41, Float32(feat.has_contact))
+    _broadcast_scalar!(obs, 42, Float32(feat.my_pips) / PIP_NORM)
+    _broadcast_scalar!(obs, 43, Float32(feat.opp_pips) / PIP_NORM)
+    _broadcast_scalar!(obs, 44, pip_diff)
+    _broadcast_scalar!(obs, 45, Float32(feat.can_bear_my))
+    _broadcast_scalar!(obs, 46, Float32(feat.can_bear_opp))
 
     # Threshold-encoded counts
-    _encode_threshold_broadcast!(obs, 45, feat.my_stragglers)      # 46-51
-    _encode_threshold_broadcast!(obs, 51, feat.opp_stragglers)     # 52-57
-    _encode_threshold_broadcast!(obs, 57, 15 - feat.my_off)        # 58-63: remaining
-    _encode_threshold_broadcast!(obs, 63, 15 - feat.opp_off)       # 64-69: remaining
+    _encode_threshold_broadcast!(obs, 46, feat.my_stragglers)      # 47-52
+    _encode_threshold_broadcast!(obs, 52, feat.opp_stragglers)     # 53-58
+    _encode_threshold_broadcast!(obs, 58, 15 - feat.my_off)        # 59-64: remaining
+    _encode_threshold_broadcast!(obs, 64, 15 - feat.opp_off)       # 65-70: remaining
 
     return nothing
 end
@@ -483,31 +501,31 @@ end
 """
     _encode_biased_features!(obs, g)
 
-Encode biased/strategic features (channels 70-129).
+Encode biased/strategic features (channels 71-130).
 Builds on full observation.
 """
 function _encode_biased_features!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
     strat = _compute_strategic_features(g)
 
     # Prime length (max 6, no overflow needed)
-    _encode_threshold_capped!(obs, 69, strat.my_prime, 6)       # 70-75
-    _encode_threshold_capped!(obs, 75, strat.opp_prime, 6)      # 76-81
+    _encode_threshold_capped!(obs, 70, strat.my_prime, 6)       # 71-76
+    _encode_threshold_capped!(obs, 76, strat.opp_prime, 6)      # 77-82
 
     # Home board blocks (max 6)
-    _encode_threshold_capped!(obs, 81, strat.my_home_blocks, 6)  # 82-87
-    _encode_threshold_capped!(obs, 87, strat.opp_home_blocks, 6) # 88-93
+    _encode_threshold_capped!(obs, 82, strat.my_home_blocks, 6)  # 83-88
+    _encode_threshold_capped!(obs, 88, strat.opp_home_blocks, 6) # 89-94
 
     # Anchors (max 6)
-    _encode_threshold_capped!(obs, 93, strat.my_anchors, 6)      # 94-99
-    _encode_threshold_capped!(obs, 99, strat.opp_anchors, 6)     # 100-105
+    _encode_threshold_capped!(obs, 94, strat.my_anchors, 6)      # 95-100
+    _encode_threshold_capped!(obs, 100, strat.opp_anchors, 6)    # 101-106
 
     # Blot count (can exceed 6, use overflow)
-    _encode_threshold_broadcast!(obs, 105, strat.my_blots)       # 106-111
-    _encode_threshold_broadcast!(obs, 111, strat.opp_blots)      # 112-117
+    _encode_threshold_broadcast!(obs, 106, strat.my_blots)       # 107-112
+    _encode_threshold_broadcast!(obs, 112, strat.opp_blots)      # 113-118
 
     # Builder count (can exceed 6, use overflow)
-    _encode_threshold_broadcast!(obs, 117, strat.my_builders)    # 118-123
-    _encode_threshold_broadcast!(obs, 123, strat.opp_builders)   # 124-129
+    _encode_threshold_broadcast!(obs, 118, strat.my_builders)    # 119-124
+    _encode_threshold_broadcast!(obs, 124, strat.opp_builders)   # 125-130
 
     return nothing
 end
@@ -561,18 +579,19 @@ end
 """
     observe_full(g::BackgammonGame) -> Array{Float32,3}
 
-Generate full observation (69 channels). Shape: (69, 1, 25).
+Generate full observation (70 channels). Shape: (70, 1, 25).
 
 Includes all minimal features plus pre-computed arithmetic features.
 No strategic bias - only saves the network from doing math.
 
-# Additional Channels (beyond minimal, 39-69)
+# Additional Channels (beyond minimal, 39-70)
 - 39: dice_sum (/12)
-- 40: Contact indicator (1=contact, 0=race)
-- 41-43: Pip counts (my, opp, diff)
-- 44-45: Can bear off flags
-- 46-57: Stragglers (outside home) threshold encoded
-- 58-69: Remaining checkers threshold encoded
+- 40: dice_delta |d1-d2| (/5)
+- 41: Contact indicator (1=contact, 0=race)
+- 42-44: Pip counts (my, opp, diff)
+- 45-46: Can bear off flags
+- 47-58: Stragglers (outside home) threshold encoded
+- 59-70: Remaining checkers threshold encoded
 
 See also: [`observe_minimal`](@ref), [`observe_biased`](@ref)
 """
@@ -585,7 +604,7 @@ end
 """
     observe_full!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
 
-In-place version of `observe_full`. Fills channels 1-69.
+In-place version of `observe_full`. Fills channels 1-70.
 """
 function observe_full!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
     # Zero out full channels
@@ -607,17 +626,17 @@ end
 """
     observe_biased(g::BackgammonGame) -> Array{Float32,3}
 
-Generate biased observation (129 channels). Shape: (129, 1, 25).
+Generate biased observation (130 channels). Shape: (130, 1, 25).
 
 Includes all full features plus hand-crafted strategic features
 inspired by TD-Gammon and gnubg.
 
-# Additional Channels (beyond full, 70-129)
-- 70-81: Prime length (longest consecutive blocks)
-- 82-93: Home board blocks (trapping power)
-- 94-105: Anchors (blocks in opponent's home)
-- 106-117: Blot count (exposure)
-- 118-129: Builder count (flexibility)
+# Additional Channels (beyond full, 71-130)
+- 71-82: Prime length (longest consecutive blocks)
+- 83-94: Home board blocks (trapping power)
+- 95-106: Anchors (blocks in opponent's home)
+- 107-118: Blot count (exposure)
+- 119-130: Builder count (flexibility)
 
 See also: [`observe_minimal`](@ref), [`observe_full`](@ref)
 """
@@ -630,7 +649,7 @@ end
 """
     observe_biased!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
 
-In-place version of `observe_biased`. Fills channels 1-129.
+In-place version of `observe_biased`. Fills channels 1-130.
 """
 function observe_biased!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
     # Zero out all channels

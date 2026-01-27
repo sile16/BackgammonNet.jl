@@ -96,10 +96,10 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 25
 | Function | Channels | Description |
 |----------|----------|-------------|
 | `observe_minimal(g)` | 38 | Raw board (threshold encoded) + dice (one-hot, high-to-low) + off counts |
-| `observe_full(g)` | 69 | + arithmetic features (pips, contact, can_bear_off, etc.) |
-| `observe_biased(g)` | 129 | + strategic features (primes, anchors, blots, builders) |
+| `observe_full(g)` | 70 | + arithmetic features (dice_sum, dice_delta, pips, contact, etc.) |
+| `observe_biased(g)` | 130 | + strategic features (primes, anchors, blots, builders) |
 
-Each tier builds on the previous: `full[1:38] == minimal`, `biased[1:69] == full`.
+Each tier builds on the previous: `full[1:38] == minimal`, `biased[1:70] == full`.
 
 In-place versions available: `observe_minimal!`, `observe_full!`, `observe_biased!`.
 

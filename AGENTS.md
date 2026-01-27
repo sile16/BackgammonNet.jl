@@ -87,7 +87,7 @@ A game starts at a chance node (dice = [0,0]). Call `sample_chance!` or use `ste
 ### Key Files
 - `src/game.jl`: `BackgammonGame` struct, move application, termination/scoring, bitboard helpers
 - `src/actions.jl`: `legal_actions`, action encoding/decoding, move generation with forced-move rules
-- `src/observation.jl`: 3-tier observation system: `observe_minimal` (38ch), `observe_full` (69ch), `observe_biased` (129ch)
+- `src/observation.jl`: 3-tier observation system: `observe_minimal` (38ch), `observe_full` (70ch), `observe_biased` (130ch)
 
 ### Game Rules Enforced
 - Bar entry priority (must enter from bar before moving other pieces)
@@ -129,10 +129,10 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 25
 | Tier | Channels | Content |
 |------|----------|---------|
 | `observe_minimal` | 38 | Raw board (threshold 1-6+) + dice (one-hot 4×6) + off counts |
-| `observe_full` | 69 | + arithmetic features (pips, contact, stragglers, remaining) |
-| `observe_biased` | 129 | + strategic features (primes, anchors, blots, builders) |
+| `observe_full` | 70 | + arithmetic features (dice_sum, dice_delta, pips, contact, stragglers, remaining) |
+| `observe_biased` | 130 | + strategic features (primes, anchors, blots, builders) |
 
-**Hierarchy property:** Each tier extends the previous (`full[1:38] == minimal`, `biased[1:69] == full`).
+**Hierarchy property:** Each tier extends the previous (`full[1:38] == minimal`, `biased[1:70] == full`).
 
 **In-place versions:** `observe_minimal!`, `observe_full!`, `observe_biased!` for high-throughput scenarios (MCTS, batch eval) to avoid GC pressure.
 
