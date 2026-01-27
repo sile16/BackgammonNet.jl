@@ -87,7 +87,7 @@ A game starts at a chance node (dice = [0,0]). Call `sample_chance!` or use `ste
 ### Key Files
 - `src/game.jl`: `BackgammonGame` struct, move application, termination/scoring, bitboard helpers
 - `src/actions.jl`: `legal_actions`, action encoding/decoding, move generation with forced-move rules
-- `src/observation.jl`: 3-tier observation system: `observe_minimal` (38ch), `observe_full` (70ch), `observe_biased` (130ch)
+- `src/observation.jl`: 3-tier observation system: `observe_minimal` (27ch), `observe_full` (59ch), `observe_biased` (119ch)
 
 ### Game Rules Enforced
 - Bar entry priority (must enter from bar before moving other pieces)
@@ -128,9 +128,9 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 26
 
 | Tier | Channels | Content |
 |------|----------|---------|
-| `observe_minimal` | 38 | Raw board (threshold 1-6+) + dice (one-hot 4×6) + off counts |
-| `observe_full` | 70 | + arithmetic features (dice_sum, dice_delta, pips, contact, stragglers, remaining) |
-| `observe_biased` | 130 | + strategic features (primes, anchors, blots, builders) |
+| `observe_minimal` | 27 | Raw board (threshold 1-6+) + dice (2 slots + flag) + off counts |
+| `observe_full` | 59 | + arithmetic features (dice_sum, dice_delta, pips, contact, stragglers, remaining) |
+| `observe_biased` | 119 | + strategic features (primes, anchors, blots, builders) |
 
 **Spatial layout (1-indexed, Julia convention):**
 - Index 1: My bar (adjacent to my entry points 1-6 at indices 2-7)
@@ -139,19 +139,44 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 26
 
 This symmetric layout enables 1D CNN kernels to naturally capture both bar→entry point relationships: my bar adjacent to points 1-6, and opponent's bar adjacent to points 19-24.
 
-**Hierarchy property:** Each tier extends the previous (`full[1:38] == minimal`, `biased[1:70] == full`).
+**Hierarchy property:** Each tier extends the previous (`full[1:27] == minimal`, `biased[1:59] == full`).
 
 **In-place versions:** `observe_minimal!`, `observe_full!`, `observe_biased!` for high-throughput scenarios (MCTS, batch eval) to avoid GC pressure.
 
 **Design rationale for Width 26:**
 - Entry logic: MyBar (Index 1) adjacent to Point 1 (Index 2) allows kernels to learn "can I enter?" patterns
 - Defense logic: OppBar (Index 26) adjacent to Point 24 (Index 25) allows kernels to detect home board threats
-- Off counts stay as global scalars (channels 37-38) since they don't have spatial adjacency relationships
+- Off counts stay as global scalars (channels 26-27) since they don't have spatial adjacency relationships
 
-**Known limitation - dice slots for non-doubles:**
-- When `remaining_actions == 1` for non-doubles, both dice are still visible in the observation
-- The game state doesn't track which specific die was used
-- This is acceptable since legal action masks filter invalid moves
+### Dice Encoding Design (Channels 13-25)
+
+The dice encoding uses 2 one-hot slots (12 channels) + 1 doubles flag (1 channel):
+
+| Channels | Content |
+|----------|---------|
+| 13-18 | Dice slot 0: high die (one-hot, values 1-6) |
+| 19-24 | Dice slot 1: low die (one-hot, values 1-6) |
+| 25 | Doubles flag |
+
+**Design philosophy:**
+- **Always show rolled values**: Dice slots always show what was rolled (e.g., 5-3 or 4-4), regardless of `remaining_actions`
+- **Action mask handles legality**: Network learns current move legality from the legal action mask, not from dice encoding
+- **Doubles flag encodes "meaningful second action coming"**: Flag helps network know if another action is expected
+
+**Doubles flag semantics:**
+- `1` if: doubles AND first action AND 3+ dice playable
+- `0` if: non-doubles, OR second action of doubles, OR blocked doubles (only 1-2 of 4 dice can be played)
+
+**Why compute "playable dice" precisely?**
+- "Blocked doubles" occur when the player is primed/trapped and can't use all 4 dice
+- The flag tells the network whether the doubles turn is "normal" (expect 4 moves) or "blocked" (fewer moves possible)
+- Computing actual playability requires simulating moves, not just using `remaining_actions` as a proxy
+- Optional `actions` parameter in `observe_*` functions avoids recomputing `legal_actions` when caller already has them
+
+**Why this design over 4 slots?**
+- 4 slots (24 channels) vs 2+flag (13 channels) = 11 channel savings
+- Rolled dice are the ground truth; network should learn from action mask which moves are legal
+- The doubles flag captures the essential information: "another meaningful action coming"
 
 ### Test Utilities (`test/runtests.jl`)
 
