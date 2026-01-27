@@ -254,6 +254,13 @@ When used with AlphaZero.jl MCTS, the call sequence during simulation is:
 **Clone behavior:**
 - Cloning mainly happens at Chance nodes where decision-move cache is empty
 - This avoids copying large action lists during stochastic branching
+- Use `clone(g)` for safe deep copies with fresh buffers
+
+**AlphaZero.jl Compatibility:**
+- AlphaZero directly constructs `BackgammonGame` in `GI.current_state`
+- A backwards-compatible constructor preserves the old 12-argument form
+- Recommended: Migrate to `clone(g)` for cleaner, future-proof copying
+- Internal fields (`_actions_buffer`, `_actions_cached`, etc.) may change between versions
 
 ---
 

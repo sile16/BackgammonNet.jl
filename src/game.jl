@@ -138,6 +138,42 @@ function BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history)
     BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, actions_buf, false, src_buf1, src_buf2)
 end
 
+# Backwards-compatible constructor for AlphaZero.jl (12 args, without _actions_cached)
+# AlphaZero directly constructs BackgammonGame in GI.current_state
+function BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, doubles_only,
+                        actions_buf, src_buf1, src_buf2)
+    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, doubles_only,
+                   actions_buf, false, src_buf1, src_buf2)
+end
+
+"""
+    clone(g::BackgammonGame) -> BackgammonGame
+
+Create a deep copy of a game state with fresh internal buffers.
+
+This is the recommended way to copy game states for MCTS or other algorithms
+that need independent game copies. The returned game has:
+- Identical game state (board, dice, player, etc.)
+- Fresh pre-allocated buffers (not shared with original)
+- Invalidated action cache (will recompute on next legal_actions call)
+
+# Example
+```julia
+g_copy = clone(g)
+step!(g_copy, action)  # Doesn't affect original g
+```
+"""
+function clone(g::BackgammonGame)
+    history, actions_buf, src_buf1, src_buf2 = _create_game_buffers()
+    append!(history, g.history)
+    return BackgammonGame(
+        g.p0, g.p1, g.dice, g.remaining_actions,
+        g.current_player, g.terminated, g.reward,
+        history, g.doubles_only,
+        actions_buf, false, src_buf1, src_buf2
+    )
+end
+
 Base.show(io::IO, g::BackgammonGame) = print(io, "BackgammonGame(p=$(g.current_player), dice=$(g.dice))")
 
 """
