@@ -132,6 +132,12 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 25
 | `observe_full` | 70 | + arithmetic features (dice_sum, dice_delta, pips, contact, stragglers, remaining) |
 | `observe_biased` | 130 | + strategic features (primes, anchors, blots, builders) |
 
+**Spatial layout (for CNN topology):**
+- Index 1: Bar (adjacent to entry points for 1D convolutions)
+- Indices 2-25: Points 1-24 in canonical order (entry → home)
+
+This layout enables 1D CNN kernels to naturally capture the bar→entry point relationship since checkers enter the board from bar to points 1-6.
+
 **Hierarchy property:** Each tier extends the previous (`full[1:38] == minimal`, `biased[1:70] == full`).
 
 **In-place versions:** `observe_minimal!`, `observe_full!`, `observe_biased!` for high-throughput scenarios (MCTS, batch eval) to avoid GC pressure.

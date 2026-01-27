@@ -7,7 +7,11 @@
 #   - Full (70 channels): + arithmetic features (no strategic bias)
 #   - Biased (130 channels): + hand-crafted strategic features
 #
-# Shape: (C, 1, 25) where width = 24 board points + 1 bar position
+# Shape: (C, 1, 25) where width = 1 bar + 24 board points
+#
+# Spatial Layout (for CNN topology):
+#   Index 1: Bar (adjacent to entry points for 1D convolutions)
+#   Indices 2-25: Points 1-24 in canonical order (entry → home)
 #
 # Design Philosophy:
 #   - Minimal: Network must learn everything from raw state
@@ -17,7 +21,7 @@
 # ============================================================================
 
 # --- Observation Dimensions ---
-const OBS_WIDTH = 25  # 24 points + bar at index 25
+const OBS_WIDTH = 25  # Bar at index 1, points 1-24 at indices 2-25
 
 # Channel counts for each tier
 const OBS_CHANNELS_MINIMAL = 38
@@ -142,19 +146,23 @@ end
 
 Encode board state using threshold encoding (channels 1-12).
 Per-point encoding with 6 channels per player.
+
+Spatial layout: [Bar, Point1, Point2, ..., Point24]
+- Index 1: Bar (for CNN topology - adjacent to entry points 1-6)
+- Indices 2-25: Points 1-24 in canonical order
 """
 function _encode_board!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
-    # Points 1-24
+    # Bar at spatial index 1 (for CNN topology - adjacent to entry points)
+    my_bar, opp_bar = _get_bar_counts(g)
+    _encode_threshold_6!(obs, 0, 1, my_bar)
+    _encode_threshold_6!(obs, 6, 1, opp_bar)
+
+    # Points 1-24 at spatial indices 2-25
     @inbounds for pt in 1:24
         my_count, opp_count = _get_checker_counts(g, pt)
-        _encode_threshold_6!(obs, 0, pt, my_count)
-        _encode_threshold_6!(obs, 6, pt, opp_count)
+        _encode_threshold_6!(obs, 0, pt + 1, my_count)
+        _encode_threshold_6!(obs, 6, pt + 1, opp_count)
     end
-
-    # Bar at spatial index 25
-    my_bar, opp_bar = _get_bar_counts(g)
-    _encode_threshold_6!(obs, 0, 25, my_bar)
-    _encode_threshold_6!(obs, 6, 25, opp_bar)
 
     return nothing
 end
@@ -547,8 +555,10 @@ The network must learn all strategic concepts from raw state.
 - 13-36: Dice one-hot (4 slots × 6 values, ordered high-to-low)
 - 37-38: Off counts (/15)
 
-# Spatial Dimension
-Width 25 = 24 board points + 1 bar position (index 25).
+# Spatial Dimension (for CNN topology)
+Width 25 = [Bar, Point1, Point2, ..., Point24]
+- Index 1: Bar (adjacent to entry points for 1D convolutions)
+- Indices 2-25: Points 1-24 in canonical order (entry → home)
 
 See also: [`observe_full`](@ref), [`observe_biased`](@ref)
 """

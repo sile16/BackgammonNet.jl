@@ -1054,38 +1054,48 @@ end
 
     @testset "Board Threshold Encoding" begin
         # Test threshold encoding: channels 1-6 for my checkers, 7-12 for opponent
+        # Spatial layout: Bar at index 1, Point N at index N+1
         b = zeros(MVector{28, Int8})
-        b[5] = 3   # 3 of my checkers at point 5
-        b[10] = -2  # 2 opponent checkers at point 10
-        b[15] = 7   # 7 of my checkers at point 15 (tests 6+ overflow)
+        b[5] = 3   # 3 of my checkers at point 5 (spatial index 6)
+        b[10] = -2  # 2 opponent checkers at point 10 (spatial index 11)
+        b[15] = 7   # 7 of my checkers at point 15 (spatial index 16, tests 6+ overflow)
 
         g = make_test_game(board=b, dice=(3, 4), current_player=0)
         obs = observe_minimal(g)
 
-        # My 3 checkers at point 5: channels 1-3 should be 1, channels 4-6 should be 0
-        @test obs[1, 1, 5] == 1.0f0  # >=1
-        @test obs[2, 1, 5] == 1.0f0  # >=2
-        @test obs[3, 1, 5] == 1.0f0  # >=3
-        @test obs[4, 1, 5] == 0.0f0  # >=4
-        @test obs[5, 1, 5] == 0.0f0  # >=5
-        @test obs[6, 1, 5] == 0.0f0  # 6+ overflow
+        # My 3 checkers at point 5 (spatial index 6): channels 1-3 should be 1
+        @test obs[1, 1, 6] == 1.0f0  # >=1
+        @test obs[2, 1, 6] == 1.0f0  # >=2
+        @test obs[3, 1, 6] == 1.0f0  # >=3
+        @test obs[4, 1, 6] == 0.0f0  # >=4
+        @test obs[5, 1, 6] == 0.0f0  # >=5
+        @test obs[6, 1, 6] == 0.0f0  # 6+ overflow
 
-        # Opponent 2 checkers at point 10: channels 7-8 should be 1
-        @test obs[7, 1, 10] == 1.0f0   # >=1
-        @test obs[8, 1, 10] == 1.0f0   # >=2
-        @test obs[9, 1, 10] == 0.0f0   # >=3
+        # Opponent 2 checkers at point 10 (spatial index 11): channels 7-8 should be 1
+        @test obs[7, 1, 11] == 1.0f0   # >=1
+        @test obs[8, 1, 11] == 1.0f0   # >=2
+        @test obs[9, 1, 11] == 0.0f0   # >=3
 
-        # My 7 checkers at point 15: test 6+ overflow encoding
-        @test obs[1, 1, 15] == 1.0f0  # >=1
-        @test obs[5, 1, 15] == 1.0f0  # >=5
-        @test obs[6, 1, 15] ≈ (7-5)/10.0f0 atol=1e-6  # 6+ overflow: (7-5)/10 = 0.2
+        # My 7 checkers at point 15 (spatial index 16): test 6+ overflow encoding
+        @test obs[1, 1, 16] == 1.0f0  # >=1
+        @test obs[5, 1, 16] == 1.0f0  # >=5
+        @test obs[6, 1, 16] ≈ (7-5)/10.0f0 atol=1e-6  # 6+ overflow: (7-5)/10 = 0.2
 
-        # Test maximum overflow (15 checkers)
+        # Test maximum overflow (15 checkers) at point 20 (spatial index 21)
         b2 = zeros(MVector{28, Int8})
         b2[20] = 15
         g2 = make_test_game(board=b2, dice=(1, 2), current_player=0)
         obs2 = observe_minimal(g2)
-        @test obs2[6, 1, 20] ≈ 1.0f0 atol=1e-6  # (15-5)/10 = 1.0
+        @test obs2[6, 1, 21] ≈ 1.0f0 atol=1e-6  # (15-5)/10 = 1.0
+
+        # Test bar encoding (spatial index 1)
+        b3 = zeros(MVector{28, Int8})
+        b3[25] = 2  # My bar (index 25 in test board = my bar)
+        g3 = make_test_game(board=b3, dice=(1, 2), current_player=0)
+        obs3 = observe_minimal(g3)
+        @test obs3[1, 1, 1] == 1.0f0  # >=1 at bar
+        @test obs3[2, 1, 1] == 1.0f0  # >=2 at bar
+        @test obs3[3, 1, 1] == 0.0f0  # >=3 at bar
     end
 
     @testset "Dice One-Hot Encoding" begin
@@ -1405,18 +1415,20 @@ end
 
         # Test 6+ overflow at exact boundary (count = 5)
         b_boundary = zeros(MVector{28, Int8})
-        b_boundary[10] = 5  # Exactly 5 checkers
+        b_boundary[10] = 5  # Exactly 5 checkers at point 10
         g_boundary = make_test_game(board=b_boundary, dice=(1, 2), current_player=0)
         obs_boundary = observe_minimal(g_boundary)
-        @test obs_boundary[5, 1, 10] == 1.0f0  # >=5 is true
-        @test obs_boundary[6, 1, 10] == 0.0f0  # 6+ overflow = (5-5)/10 = 0
+        # Point 10 is at spatial index 11 (bar at 1, point N at N+1)
+        @test obs_boundary[5, 1, 11] == 1.0f0  # >=5 is true
+        @test obs_boundary[6, 1, 11] == 0.0f0  # 6+ overflow = (5-5)/10 = 0
 
         # Test 6+ overflow at count = 6
         b_six = zeros(MVector{28, Int8})
-        b_six[10] = 6
+        b_six[10] = 6  # 6 checkers at point 10
         g_six = make_test_game(board=b_six, dice=(1, 2), current_player=0)
         obs_six = observe_minimal(g_six)
-        @test obs_six[6, 1, 10] ≈ (6-5)/10.0f0 atol=1e-6  # 0.1
+        # Point 10 is at spatial index 11
+        @test obs_six[6, 1, 11] ≈ (6-5)/10.0f0 atol=1e-6  # 0.1
 
         # Test features bounded in [0, 1] range at chance node
         @test all(obs_chance .>= 0.0f0)

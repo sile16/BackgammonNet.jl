@@ -99,6 +99,10 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 25
 | `observe_full(g)` | 70 | + arithmetic features (dice_sum, dice_delta, pips, contact, etc.) |
 | `observe_biased(g)` | 130 | + strategic features (primes, anchors, blots, builders) |
 
+**Spatial Layout (for CNN topology):**
+- Index 1: Bar (adjacent to entry points for 1D convolutions)
+- Indices 2-25: Points 1-24 in canonical order
+
 Each tier builds on the previous: `full[1:38] == minimal`, `biased[1:70] == full`.
 
 In-place versions available: `observe_minimal!`, `observe_full!`, `observe_biased!`.
