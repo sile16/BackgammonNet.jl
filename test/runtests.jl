@@ -1122,6 +1122,27 @@ end
         # Opponent bar should be at spatial index 26
         @test obs5[7, 1, 26] == 1.0f0   # >=1 at opponent bar
         @test obs5[8, 1, 26] == 0.0f0   # >=2 at opponent bar
+
+        # Test point remapping with current_player=1 (canonical flip + spatial offset)
+        # Verifies that points are correctly mapped to spatial indices 2-25 for P1
+        b6 = zeros(MVector{28, Int8})
+        b6[1] = 3    # My 3 checkers at canonical point 1 (spatial index 2)
+        b6[24] = -2  # Opponent 2 checkers at canonical point 24 (spatial index 25)
+        b6[12] = 1   # My 1 checker at canonical point 12 (spatial index 13)
+        g6 = make_test_game(board=b6, dice=(1, 2), current_player=1)
+        obs6 = observe_minimal(g6)
+        # My checkers at canonical point 1 → spatial index 2
+        @test obs6[1, 1, 2] == 1.0f0  # >=1 at point 1
+        @test obs6[2, 1, 2] == 1.0f0  # >=2 at point 1
+        @test obs6[3, 1, 2] == 1.0f0  # >=3 at point 1
+        @test obs6[4, 1, 2] == 0.0f0  # >=4 at point 1
+        # Opponent checkers at canonical point 24 → spatial index 25
+        @test obs6[7, 1, 25] == 1.0f0   # >=1 at point 24
+        @test obs6[8, 1, 25] == 1.0f0   # >=2 at point 24
+        @test obs6[9, 1, 25] == 0.0f0   # >=3 at point 24
+        # My checker at canonical point 12 → spatial index 13
+        @test obs6[1, 1, 13] == 1.0f0  # >=1 at point 12
+        @test obs6[2, 1, 13] == 0.0f0  # >=2 at point 12
     end
 
     @testset "Dice One-Hot Encoding" begin
