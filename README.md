@@ -5,7 +5,7 @@ High-performance Backgammon implementation in Julia, designed for AlphaZero.jl.
 ## Features
 - Optimized bitboard representation (UInt128).
 - Player action indices 1-676, encoding two locations (0-25 each): `action = loc1*26 + loc2 + 1`.
-- Chance action indices 1-21 for dice outcomes (or 6 specific indices in doubles-only mode).
+- Chance action indices 1-21 for dice outcomes (in doubles-only mode, 6 have non-zero probability).
 - Strictly enforced Backgammon rules (forcing moves, max dice usage).
 - Two modes of operation: Deterministic Step (auto-chance) and Explicit Phase (manual-chance).
 

@@ -174,13 +174,6 @@ function get_legal_source_locs!(locs::Vector{Int}, p0::UInt128, p1::UInt128, cp:
     return locs
 end
 
-# Allocating version for backwards compatibility and use in is_action_valid
-function get_legal_source_locs(p0::UInt128, p1::UInt128, cp::Integer, die::Integer)
-    locs = Int[]
-    sizehint!(locs, SOURCES_HINT_SIZE)
-    return get_legal_source_locs!(locs, p0, p1, cp, die)
-end
-
 const CHANCE_ACTIONS = collect(1:21)  # Pre-allocated chance node actions
 const PASS_PASS_ACTION = [encode_action(PASS_LOC, PASS_LOC)]  # Pre-allocated for no-move case
 
@@ -209,6 +202,8 @@ function legal_actions(g::BackgammonGame)
         return g._actions_buffer
     end
 
+    # dice[1] = high die, dice[2] = low die (guaranteed by DICE_OUTCOMES ordering)
+    # loc1 uses d1 (high die), loc2 uses d2 (low die) - aligned with observation slots
     d1 = Int(g.dice[1])
     d2 = Int(g.dice[2])
     cp = g.current_player

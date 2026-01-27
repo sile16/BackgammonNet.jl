@@ -4,6 +4,51 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## Release Notes - v0.3.2
+
+### Breaking Changes
+- **Dice ordering aligned**: `dice[1]` is now HIGH die, `dice[2]` is now LOW die
+  - Action encoding: `loc1` uses high die, `loc2` uses low die
+  - Observation slots: slot 0 (ch 13-18) = high die, slot 1 (ch 19-24) = low die
+  - This aligns the entire system: observation → action → execution
+- **Removed backwards-compatible constructor**: Use `clone(g)` for copying game state
+- **Added `obs_type` field to BackgammonGame**: All constructors now accept `obs_type` keyword
+
+### New Features
+- **Flat observations**: Same features as 3D but without spatial broadcasting
+  - `observe_minimal_flat()` → 330 values (vs 30×1×26=780 in 3D)
+  - `observe_full_flat()` → 362 values (vs 62×1×26=1612 in 3D)
+  - `observe_biased_flat()` → 422 values (vs 122×1×26=3172 in 3D)
+- **Hybrid observations**: Board spatial (12×26) + globals flat (NamedTuple)
+  - `observe_minimal_hybrid()` → (board=12×26, globals=18)
+  - `observe_full_hybrid()` → (board=12×26, globals=50)
+  - `observe_biased_hybrid()` → (board=12×26, globals=110)
+  - Ideal for conv1d on board, then concatenate globals before dense layers
+- **Configurable observation type per game**:
+  - `initial_state(obs_type=:minimal_flat)` - set at creation
+  - `set_obs_type!(g, :full)` - change observation type
+  - `observe(g)` - dispatch to correct observation function
+  - `obs_dims(g)` or `obs_dims(:minimal)` - get dimensions
+- **Nine observation types**: `:minimal`, `:full`, `:biased`, `:minimal_flat`, `:full_flat`, `:biased_flat`, `:minimal_hybrid`, `:full_hybrid`, `:biased_hybrid`
+
+### Bug Fixes
+- **Fixed doubles second action move count**: Previously hard-coded to bin 2 (2 moves), now correctly computes 0/1/2 playable moves when player may be blocked by a prime
+- **Removed PyCall from test target**: `Pkg.test()` no longer requires PyCall (gnubg tests are run separately)
+
+### Cleanup
+- **Removed `vector_observation` alias**: Use `observe_full()` directly (benchmark.jl updated)
+- **Removed dead code**: `get_legal_source_locs` allocating function (unused after is_action_valid refactor)
+- **Fixed README doubles_only wording**: Clarified that API returns all 21 indices with 6 having non-zero probability
+
+### Tests Added
+- Tests for `clone()` function
+- Tests for doubles second action move count
+- Tests for flat observations
+- Tests for hybrid observations
+- Tests for `observe()`, `obs_dims()`, `set_obs_type!()`
+
+---
+
 ## Release Notes - v0.3.0
 
 ### Breaking Changes
@@ -115,8 +160,14 @@ For P1 (home board physical 1-6):
 
 ### Action Encoding
 Actions are encoded as `(loc1 * 26) + loc2 + 1` where:
-- `loc1`: source for die 1 (0=bar, 1-24=points, 25=pass)
-- `loc2`: source for die 2
+- `loc1`: source for HIGH die (dice[1]) - 0=bar, 1-24=points, 25=pass
+- `loc2`: source for LOW die (dice[2])
+
+**Dice ordering is consistent throughout:**
+- `DICE_OUTCOMES` stores tuples as (high, low)
+- `g.dice[1]` = high die, `g.dice[2]` = low die
+- Observation slot 0 (ch 13-18) = high die, slot 1 (ch 19-24) = low die
+- Action loc1 uses high die, loc2 uses low die
 
 For doubles, two actions are needed per turn (`remaining_actions = 2`).
 

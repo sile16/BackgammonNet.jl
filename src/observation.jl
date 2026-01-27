@@ -24,10 +24,25 @@
 # --- Observation Dimensions ---
 const OBS_WIDTH = 26  # My bar at 1, points 1-24 at 2-25, opponent bar at 26
 
-# Channel counts for each tier
+# Channel counts for each tier (3D observations)
 const OBS_CHANNELS_MINIMAL = 30   # 12 board + 12 dice (2 slots) + 4 move count + 2 off
 const OBS_CHANNELS_FULL = 62      # 30 minimal + 32 full features (31-62)
 const OBS_CHANNELS_BIASED = 122   # 62 full + 60 biased features (63-122)
+
+# Flat observation sizes (same features, globals appear once instead of broadcast)
+# Minimal: 312 board (2×26×6) + 12 dice (2×6) + 4 move count + 2 off = 330
+const OBS_FLAT_MINIMAL = 330
+# Full adds: 8 scalars + 24 thresholds (4×6) = 32 → 330 + 32 = 362
+const OBS_FLAT_FULL = 362
+# Biased adds: 60 thresholds (10×6) = 60 → 362 + 60 = 422
+const OBS_FLAT_BIASED = 422
+
+# Hybrid observation sizes: board (12×26) + globals (flat)
+# Board is spatial for conv1d, globals concatenated after conv
+const OBS_HYBRID_BOARD = (12, 26)  # (channels, width)
+const OBS_HYBRID_GLOBALS_MINIMAL = 18   # 12 dice + 4 move count + 2 off
+const OBS_HYBRID_GLOBALS_FULL = 50      # 18 + 32 full features
+const OBS_HYBRID_GLOBALS_BIASED = 110   # 50 + 60 biased features
 
 # --- Normalization Constants ---
 const OFF_NORM = 15.0f0           # Max checkers per player
@@ -187,15 +202,15 @@ end
 Get rolled dice values as (high, low) pair.
 Returns (0, 0) if at chance node (no dice rolled).
 Always shows the original rolled values regardless of remaining_actions.
+
+Note: dice[1] is always high die, dice[2] is always low die (guaranteed by DICE_OUTCOMES).
 """
 @inline function _get_dice_pair(g::BackgammonGame)
     d1, d2 = g.dice[1], g.dice[2]
     if d1 == 0 || d2 == 0
         return (0, 0)
     end
-    high = max(Int(d1), Int(d2))
-    low = min(Int(d1), Int(d2))
-    return (high, low)
+    return (Int(d1), Int(d2))  # Already (high, low) from DICE_OUTCOMES
 end
 
 """
@@ -335,6 +350,36 @@ function _compute_playable_dice_non_doubles(g::BackgammonGame, actions::Union{No
 end
 
 """
+    _compute_playable_moves_current(g::BackgammonGame, actions=nothing) -> Int
+
+Compute playable moves for the current action (0, 1, or 2).
+
+Used for the second action of doubles where player may be blocked and unable
+to use all remaining dice. Checks legal actions for PASS locations:
+- Both locs non-PASS → 2 playable
+- One loc non-PASS → 1 playable
+- Both locs PASS → 0 playable
+
+Uses optional pre-computed `actions` to avoid duplicate legal_actions computation.
+"""
+function _compute_playable_moves_current(g::BackgammonGame, actions::Union{Nothing, Vector{Int}}=nothing)
+    acts = actions === nothing ? legal_actions(g) : actions
+
+    has_any_move = false
+    for act in acts
+        l1, l2 = decode_action(act)
+
+        if l1 != PASS_LOC && l2 != PASS_LOC
+            return 2  # Both moves used
+        elseif l1 != PASS_LOC || l2 != PASS_LOC
+            has_any_move = true
+        end
+    end
+
+    return has_any_move ? 1 : 0
+end
+
+"""
     _get_original_dice_sum(g::BackgammonGame) -> Int
 
 Get sum of original dice roll (before any moves).
@@ -386,12 +431,13 @@ function _encode_dice!(obs::AbstractArray{Float32,3}, g::BackgammonGame,
     if high > 0
         move_count = 0
         if high == low
-            # Doubles: compute exact playable moves (0-4)
+            # Doubles: compute exact playable moves
             if g.remaining_actions == 2
+                # First action: 0-4 moves playable
                 move_count = _compute_playable_dice_doubles(g, actions)
             else
-                # Second action of doubles: 2 moves remaining
-                move_count = 2
+                # Second action: 0-2 moves playable (may be blocked by prime)
+                move_count = _compute_playable_moves_current(g, actions)
             end
         else
             # Non-doubles: compute exact playable moves (0, 1, or 2)
@@ -856,8 +902,698 @@ function observe_biased!(obs::AbstractArray{Float32,3}, g::BackgammonGame;
     return obs
 end
 
-# Default observation function
-const vector_observation = observe_full
+# ============================================================================
+# Flat Observations (same features, globals appear once)
+# ============================================================================
+
+"""
+    _encode_board_flat!(obs, g, offset) -> Int
+
+Encode board state into flat vector starting at offset.
+Returns new offset after encoding.
+
+Layout: 26 positions × 2 players × 6 thresholds = 312 values
+Order: [MyBar×12, Point1×12, ..., Point24×12, OppBar×12]
+Each position: [my_thresh1..6, opp_thresh1..6]
+"""
+function _encode_board_flat!(obs::AbstractVector{Float32}, g::BackgammonGame, offset::Int)
+    my_bar, opp_bar = _get_bar_counts(g)
+
+    # My bar at position 0 (index 1 in 1-indexed obs)
+    idx = offset
+    @inbounds begin
+        # My threshold at my bar
+        obs[idx + 1] = Float32(my_bar >= 1)
+        obs[idx + 2] = Float32(my_bar >= 2)
+        obs[idx + 3] = Float32(my_bar >= 3)
+        obs[idx + 4] = Float32(my_bar >= 4)
+        obs[idx + 5] = Float32(my_bar >= 5)
+        obs[idx + 6] = my_bar >= 6 ? Float32(my_bar - 5) / OVERFLOW_NORM : 0.0f0
+        # Opp threshold at my bar (always 0)
+        obs[idx + 7] = 0.0f0
+        obs[idx + 8] = 0.0f0
+        obs[idx + 9] = 0.0f0
+        obs[idx + 10] = 0.0f0
+        obs[idx + 11] = 0.0f0
+        obs[idx + 12] = 0.0f0
+    end
+    idx += 12
+
+    # Points 1-24
+    @inbounds for pt in 1:24
+        my_count, opp_count = _get_checker_counts(g, pt)
+        # My threshold
+        obs[idx + 1] = Float32(my_count >= 1)
+        obs[idx + 2] = Float32(my_count >= 2)
+        obs[idx + 3] = Float32(my_count >= 3)
+        obs[idx + 4] = Float32(my_count >= 4)
+        obs[idx + 5] = Float32(my_count >= 5)
+        obs[idx + 6] = my_count >= 6 ? Float32(my_count - 5) / OVERFLOW_NORM : 0.0f0
+        # Opp threshold
+        obs[idx + 7] = Float32(opp_count >= 1)
+        obs[idx + 8] = Float32(opp_count >= 2)
+        obs[idx + 9] = Float32(opp_count >= 3)
+        obs[idx + 10] = Float32(opp_count >= 4)
+        obs[idx + 11] = Float32(opp_count >= 5)
+        obs[idx + 12] = opp_count >= 6 ? Float32(opp_count - 5) / OVERFLOW_NORM : 0.0f0
+        idx += 12
+    end
+
+    # Opp bar at position 25
+    @inbounds begin
+        # My threshold at opp bar (always 0)
+        obs[idx + 1] = 0.0f0
+        obs[idx + 2] = 0.0f0
+        obs[idx + 3] = 0.0f0
+        obs[idx + 4] = 0.0f0
+        obs[idx + 5] = 0.0f0
+        obs[idx + 6] = 0.0f0
+        # Opp threshold at opp bar
+        obs[idx + 7] = Float32(opp_bar >= 1)
+        obs[idx + 8] = Float32(opp_bar >= 2)
+        obs[idx + 9] = Float32(opp_bar >= 3)
+        obs[idx + 10] = Float32(opp_bar >= 4)
+        obs[idx + 11] = Float32(opp_bar >= 5)
+        obs[idx + 12] = opp_bar >= 6 ? Float32(opp_bar - 5) / OVERFLOW_NORM : 0.0f0
+    end
+
+    return offset + 312
+end
+
+"""
+    _encode_dice_flat!(obs, g, offset, actions) -> Int
+
+Encode dice and move count into flat vector starting at offset.
+Returns new offset after encoding.
+
+Layout: 12 dice one-hot (2×6) + 4 move count = 16 values
+"""
+function _encode_dice_flat!(obs::AbstractVector{Float32}, g::BackgammonGame, offset::Int,
+                            actions::Union{Nothing, Vector{Int}}=nothing)
+    high, low = _get_dice_pair(g)
+    idx = offset
+
+    # High die one-hot (6 values)
+    @inbounds for v in 1:6
+        obs[idx + v] = Float32(high == v)
+    end
+    idx += 6
+
+    # Low die one-hot (6 values)
+    @inbounds for v in 1:6
+        obs[idx + v] = Float32(low == v)
+    end
+    idx += 6
+
+    # Move count one-hot (4 values, bins 1,2,3,4)
+    move_count = 0
+    if high > 0
+        if high == low
+            # Doubles
+            if g.remaining_actions == 2
+                move_count = _compute_playable_dice_doubles(g, actions)
+            else
+                move_count = _compute_playable_moves_current(g, actions)
+            end
+        else
+            # Non-doubles
+            move_count = _compute_playable_dice_non_doubles(g, actions)
+        end
+    end
+
+    @inbounds for bin in 1:4
+        obs[idx + bin] = Float32(move_count == bin)
+    end
+
+    return offset + 16
+end
+
+"""
+    _encode_off_flat!(obs, g, offset) -> Int
+
+Encode off counts into flat vector starting at offset.
+Returns new offset after encoding.
+
+Layout: 2 values (my_off, opp_off normalized by 15)
+"""
+function _encode_off_flat!(obs::AbstractVector{Float32}, g::BackgammonGame, offset::Int)
+    my_off, opp_off = _get_off_counts(g)
+
+    @inbounds begin
+        obs[offset + 1] = Float32(my_off) / OFF_NORM
+        obs[offset + 2] = Float32(opp_off) / OFF_NORM
+    end
+
+    return offset + 2
+end
+
+"""
+    _encode_threshold_flat!(obs, offset, count) -> Int
+
+Encode count using 6-threshold scheme at offset.
+Returns new offset after encoding.
+"""
+@inline function _encode_threshold_flat!(obs::AbstractVector{Float32}, offset::Int, count::Int)
+    @inbounds begin
+        obs[offset + 1] = Float32(count >= 1)
+        obs[offset + 2] = Float32(count >= 2)
+        obs[offset + 3] = Float32(count >= 3)
+        obs[offset + 4] = Float32(count >= 4)
+        obs[offset + 5] = Float32(count >= 5)
+        obs[offset + 6] = count >= 6 ? Float32(count - 5) / OVERFLOW_NORM : 0.0f0
+    end
+    return offset + 6
+end
+
+"""
+    _encode_full_features_flat!(obs, g, offset) -> Int
+
+Encode full features into flat vector starting at offset.
+Returns new offset after encoding.
+
+Layout: 8 scalars + 4×6 thresholds = 32 values
+"""
+function _encode_full_features_flat!(obs::AbstractVector{Float32}, g::BackgammonGame, offset::Int)
+    feat = _compute_full_features(g)
+    dice_sum = _get_original_dice_sum(g)
+    dice_delta = _get_dice_delta(g)
+    pip_diff = clamp((feat.my_pips - feat.opp_pips) / PIP_NORM, -1.0f0, 1.0f0)
+
+    idx = offset
+
+    # 8 scalar features
+    @inbounds begin
+        obs[idx + 1] = Float32(dice_sum) / DICE_SUM_NORM
+        obs[idx + 2] = Float32(dice_delta) / DICE_DELTA_NORM
+        obs[idx + 3] = Float32(feat.has_contact)
+        obs[idx + 4] = Float32(feat.my_pips) / PIP_NORM
+        obs[idx + 5] = Float32(feat.opp_pips) / PIP_NORM
+        obs[idx + 6] = pip_diff
+        obs[idx + 7] = Float32(feat.can_bear_my)
+        obs[idx + 8] = Float32(feat.can_bear_opp)
+    end
+    idx += 8
+
+    # 4×6 threshold features
+    idx = _encode_threshold_flat!(obs, idx, feat.my_stragglers)
+    idx = _encode_threshold_flat!(obs, idx, feat.opp_stragglers)
+    idx = _encode_threshold_flat!(obs, idx, 15 - feat.my_off)
+    idx = _encode_threshold_flat!(obs, idx, 15 - feat.opp_off)
+
+    return idx
+end
+
+"""
+    _encode_biased_features_flat!(obs, g, offset) -> Int
+
+Encode biased features into flat vector starting at offset.
+Returns new offset after encoding.
+
+Layout: 10×6 thresholds = 60 values
+"""
+function _encode_biased_features_flat!(obs::AbstractVector{Float32}, g::BackgammonGame, offset::Int)
+    strat = _compute_strategic_features(g)
+    idx = offset
+
+    idx = _encode_threshold_flat!(obs, idx, strat.my_prime)
+    idx = _encode_threshold_flat!(obs, idx, strat.opp_prime)
+    idx = _encode_threshold_flat!(obs, idx, strat.my_home_blocks)
+    idx = _encode_threshold_flat!(obs, idx, strat.opp_home_blocks)
+    idx = _encode_threshold_flat!(obs, idx, strat.my_anchors)
+    idx = _encode_threshold_flat!(obs, idx, strat.opp_anchors)
+    idx = _encode_threshold_flat!(obs, idx, strat.my_blots)
+    idx = _encode_threshold_flat!(obs, idx, strat.opp_blots)
+    idx = _encode_threshold_flat!(obs, idx, strat.my_builders)
+    idx = _encode_threshold_flat!(obs, idx, strat.opp_builders)
+
+    return idx
+end
+
+# ============================================================================
+# Flat Public API
+# ============================================================================
+
+"""
+    observe_minimal_flat(g::BackgammonGame; actions=nothing) -> Vector{Float32}
+
+Generate minimal flat observation (330 values).
+
+Same features as `observe_minimal` but without spatial broadcasting.
+Global features (dice, move count, off counts) appear once instead of 26 times.
+
+# Layout (330 total)
+- Board: 312 values (26 positions × 12 thresholds per position)
+- Dice: 12 values (2 slots × 6 one-hot)
+- Move count: 4 values (bins 1,2,3,4 one-hot)
+- Off counts: 2 values (my, opp normalized)
+
+See also: [`observe_minimal`](@ref), [`observe_full_flat`](@ref)
+"""
+function observe_minimal_flat(g::BackgammonGame; actions::Union{Nothing, Vector{Int}}=nothing)
+    obs = zeros(Float32, OBS_FLAT_MINIMAL)
+    observe_minimal_flat!(obs, g; actions=actions)
+    return obs
+end
+
+"""
+    observe_minimal_flat!(obs::AbstractVector{Float32}, g::BackgammonGame; actions=nothing)
+
+In-place version of `observe_minimal_flat`.
+"""
+function observe_minimal_flat!(obs::AbstractVector{Float32}, g::BackgammonGame;
+                               actions::Union{Nothing, Vector{Int}}=nothing)
+    fill!(obs, 0.0f0)
+    idx = _encode_board_flat!(obs, g, 0)
+    idx = _encode_dice_flat!(obs, g, idx, actions)
+    idx = _encode_off_flat!(obs, g, idx)
+    return obs
+end
+
+"""
+    observe_full_flat(g::BackgammonGame; actions=nothing) -> Vector{Float32}
+
+Generate full flat observation (362 values).
+
+Same features as `observe_full` but without spatial broadcasting.
+
+# Layout (362 total)
+- Minimal: 330 values
+- Full additions: 32 values (8 scalars + 4×6 thresholds)
+
+See also: [`observe_full`](@ref), [`observe_minimal_flat`](@ref)
+"""
+function observe_full_flat(g::BackgammonGame; actions::Union{Nothing, Vector{Int}}=nothing)
+    obs = zeros(Float32, OBS_FLAT_FULL)
+    observe_full_flat!(obs, g; actions=actions)
+    return obs
+end
+
+"""
+    observe_full_flat!(obs::AbstractVector{Float32}, g::BackgammonGame; actions=nothing)
+
+In-place version of `observe_full_flat`.
+"""
+function observe_full_flat!(obs::AbstractVector{Float32}, g::BackgammonGame;
+                            actions::Union{Nothing, Vector{Int}}=nothing)
+    fill!(obs, 0.0f0)
+    idx = _encode_board_flat!(obs, g, 0)
+    idx = _encode_dice_flat!(obs, g, idx, actions)
+    idx = _encode_off_flat!(obs, g, idx)
+    idx = _encode_full_features_flat!(obs, g, idx)
+    return obs
+end
+
+"""
+    observe_biased_flat(g::BackgammonGame; actions=nothing) -> Vector{Float32}
+
+Generate biased flat observation (422 values).
+
+Same features as `observe_biased` but without spatial broadcasting.
+
+# Layout (422 total)
+- Full: 362 values
+- Biased additions: 60 values (10×6 thresholds)
+
+See also: [`observe_biased`](@ref), [`observe_full_flat`](@ref)
+"""
+function observe_biased_flat(g::BackgammonGame; actions::Union{Nothing, Vector{Int}}=nothing)
+    obs = zeros(Float32, OBS_FLAT_BIASED)
+    observe_biased_flat!(obs, g; actions=actions)
+    return obs
+end
+
+"""
+    observe_biased_flat!(obs::AbstractVector{Float32}, g::BackgammonGame; actions=nothing)
+
+In-place version of `observe_biased_flat`.
+"""
+function observe_biased_flat!(obs::AbstractVector{Float32}, g::BackgammonGame;
+                              actions::Union{Nothing, Vector{Int}}=nothing)
+    fill!(obs, 0.0f0)
+    idx = _encode_board_flat!(obs, g, 0)
+    idx = _encode_dice_flat!(obs, g, idx, actions)
+    idx = _encode_off_flat!(obs, g, idx)
+    idx = _encode_full_features_flat!(obs, g, idx)
+    idx = _encode_biased_features_flat!(obs, g, idx)
+    return obs
+end
+
+# ============================================================================
+# Hybrid Observations (board spatial + globals flat)
+# ============================================================================
+# For networks that use conv1d on board, then concatenate globals before dense.
+# Returns NamedTuple with :board (12×26 matrix) and :globals (flat vector).
+
+"""
+    _encode_board_hybrid!(board, g)
+
+Encode board state into 12×26 matrix for hybrid observations.
+Channels 1-6: my thresholds, channels 7-12: opponent thresholds.
+"""
+function _encode_board_hybrid!(board::AbstractMatrix{Float32}, g::BackgammonGame)
+    fill!(board, 0.0f0)
+    my_bar, opp_bar = _get_bar_counts(g)
+
+    # My bar at width index 1
+    @inbounds begin
+        board[1, 1] = Float32(my_bar >= 1)
+        board[2, 1] = Float32(my_bar >= 2)
+        board[3, 1] = Float32(my_bar >= 3)
+        board[4, 1] = Float32(my_bar >= 4)
+        board[5, 1] = Float32(my_bar >= 5)
+        board[6, 1] = my_bar >= 6 ? Float32(my_bar - 5) / OVERFLOW_NORM : 0.0f0
+        # Opp thresholds at my bar (always 0, already filled)
+    end
+
+    # Points 1-24 at width indices 2-25
+    @inbounds for pt in 1:24
+        my_count, opp_count = _get_checker_counts(g, pt)
+        w = pt + 1
+        board[1, w] = Float32(my_count >= 1)
+        board[2, w] = Float32(my_count >= 2)
+        board[3, w] = Float32(my_count >= 3)
+        board[4, w] = Float32(my_count >= 4)
+        board[5, w] = Float32(my_count >= 5)
+        board[6, w] = my_count >= 6 ? Float32(my_count - 5) / OVERFLOW_NORM : 0.0f0
+        board[7, w] = Float32(opp_count >= 1)
+        board[8, w] = Float32(opp_count >= 2)
+        board[9, w] = Float32(opp_count >= 3)
+        board[10, w] = Float32(opp_count >= 4)
+        board[11, w] = Float32(opp_count >= 5)
+        board[12, w] = opp_count >= 6 ? Float32(opp_count - 5) / OVERFLOW_NORM : 0.0f0
+    end
+
+    # Opp bar at width index 26
+    @inbounds begin
+        # My thresholds at opp bar (always 0, already filled)
+        board[7, 26] = Float32(opp_bar >= 1)
+        board[8, 26] = Float32(opp_bar >= 2)
+        board[9, 26] = Float32(opp_bar >= 3)
+        board[10, 26] = Float32(opp_bar >= 4)
+        board[11, 26] = Float32(opp_bar >= 5)
+        board[12, 26] = opp_bar >= 6 ? Float32(opp_bar - 5) / OVERFLOW_NORM : 0.0f0
+    end
+
+    return board
+end
+
+"""
+    _encode_globals_minimal!(globals, g, actions) -> Int
+
+Encode minimal global features: dice (12) + move count (4) + off (2) = 18.
+Returns new offset after encoding.
+"""
+function _encode_globals_minimal!(globals::AbstractVector{Float32}, g::BackgammonGame,
+                                  actions::Union{Nothing, Vector{Int}}=nothing)
+    high, low = _get_dice_pair(g)
+    idx = 0
+
+    # High die one-hot (6 values)
+    @inbounds for v in 1:6
+        globals[idx + v] = Float32(high == v)
+    end
+    idx += 6
+
+    # Low die one-hot (6 values)
+    @inbounds for v in 1:6
+        globals[idx + v] = Float32(low == v)
+    end
+    idx += 6
+
+    # Move count one-hot (4 values, bins 1,2,3,4)
+    move_count = 0
+    if high > 0
+        if high == low
+            if g.remaining_actions == 2
+                move_count = _compute_playable_dice_doubles(g, actions)
+            else
+                move_count = _compute_playable_moves_current(g, actions)
+            end
+        else
+            move_count = _compute_playable_dice_non_doubles(g, actions)
+        end
+    end
+
+    @inbounds for bin in 1:4
+        globals[idx + bin] = Float32(move_count == bin)
+    end
+    idx += 4
+
+    # Off counts (2 values)
+    my_off, opp_off = _get_off_counts(g)
+    @inbounds begin
+        globals[idx + 1] = Float32(my_off) / OFF_NORM
+        globals[idx + 2] = Float32(opp_off) / OFF_NORM
+    end
+
+    return idx + 2
+end
+
+"""
+    observe_minimal_hybrid(g::BackgammonGame; actions=nothing) -> NamedTuple
+
+Generate minimal hybrid observation.
+
+Returns NamedTuple with:
+- `board`: 12×26 Float32 matrix (spatial, for conv1d)
+- `globals`: 18-element Float32 vector (dice + move count + off)
+
+# Example
+```julia
+obs = observe_minimal_hybrid(g)
+board_features = conv1d(obs.board)  # Process spatial
+combined = vcat(flatten(board_features), obs.globals)  # Concatenate
+output = dense(combined)
+```
+
+See also: [`observe_full_hybrid`](@ref), [`observe_biased_hybrid`](@ref)
+"""
+function observe_minimal_hybrid(g::BackgammonGame; actions::Union{Nothing, Vector{Int}}=nothing)
+    board = zeros(Float32, 12, 26)
+    globals = zeros(Float32, OBS_HYBRID_GLOBALS_MINIMAL)
+    observe_minimal_hybrid!(board, globals, g; actions=actions)
+    return (board=board, globals=globals)
+end
+
+"""
+    observe_minimal_hybrid!(board, globals, g; actions=nothing)
+
+In-place version of `observe_minimal_hybrid`.
+"""
+function observe_minimal_hybrid!(board::AbstractMatrix{Float32}, globals::AbstractVector{Float32},
+                                 g::BackgammonGame; actions::Union{Nothing, Vector{Int}}=nothing)
+    _encode_board_hybrid!(board, g)
+    fill!(globals, 0.0f0)
+    _encode_globals_minimal!(globals, g, actions)
+    return (board=board, globals=globals)
+end
+
+"""
+    observe_full_hybrid(g::BackgammonGame; actions=nothing) -> NamedTuple
+
+Generate full hybrid observation.
+
+Returns NamedTuple with:
+- `board`: 12×26 Float32 matrix (spatial)
+- `globals`: 50-element Float32 vector (18 minimal + 32 full features)
+
+See also: [`observe_minimal_hybrid`](@ref), [`observe_biased_hybrid`](@ref)
+"""
+function observe_full_hybrid(g::BackgammonGame; actions::Union{Nothing, Vector{Int}}=nothing)
+    board = zeros(Float32, 12, 26)
+    globals = zeros(Float32, OBS_HYBRID_GLOBALS_FULL)
+    observe_full_hybrid!(board, globals, g; actions=actions)
+    return (board=board, globals=globals)
+end
+
+"""
+    observe_full_hybrid!(board, globals, g; actions=nothing)
+
+In-place version of `observe_full_hybrid`.
+"""
+function observe_full_hybrid!(board::AbstractMatrix{Float32}, globals::AbstractVector{Float32},
+                              g::BackgammonGame; actions::Union{Nothing, Vector{Int}}=nothing)
+    _encode_board_hybrid!(board, g)
+    fill!(globals, 0.0f0)
+    idx = _encode_globals_minimal!(globals, g, actions)
+    _encode_full_features_flat!(globals, g, idx)
+    return (board=board, globals=globals)
+end
+
+"""
+    observe_biased_hybrid(g::BackgammonGame; actions=nothing) -> NamedTuple
+
+Generate biased hybrid observation.
+
+Returns NamedTuple with:
+- `board`: 12×26 Float32 matrix (spatial)
+- `globals`: 110-element Float32 vector (50 full + 60 biased features)
+
+See also: [`observe_minimal_hybrid`](@ref), [`observe_full_hybrid`](@ref)
+"""
+function observe_biased_hybrid(g::BackgammonGame; actions::Union{Nothing, Vector{Int}}=nothing)
+    board = zeros(Float32, 12, 26)
+    globals = zeros(Float32, OBS_HYBRID_GLOBALS_BIASED)
+    observe_biased_hybrid!(board, globals, g; actions=actions)
+    return (board=board, globals=globals)
+end
+
+"""
+    observe_biased_hybrid!(board, globals, g; actions=nothing)
+
+In-place version of `observe_biased_hybrid`.
+"""
+function observe_biased_hybrid!(board::AbstractMatrix{Float32}, globals::AbstractVector{Float32},
+                                g::BackgammonGame; actions::Union{Nothing, Vector{Int}}=nothing)
+    _encode_board_hybrid!(board, g)
+    fill!(globals, 0.0f0)
+    idx = _encode_globals_minimal!(globals, g, actions)
+    idx = _encode_full_features_flat!(globals, g, idx)
+    _encode_biased_features_flat!(globals, g, idx)
+    return (board=board, globals=globals)
+end
+
+# ============================================================================
+# Game-Level Observation API (dispatches on g.obs_type)
+# ============================================================================
+
+"""
+    observe(g::BackgammonGame; actions=nothing)
+
+Generate observation based on game's configured `obs_type` field.
+
+Dispatches to the appropriate observation function based on g.obs_type:
+- `:minimal` → `observe_minimal(g)` (30×1×26 tensor)
+- `:full` → `observe_full(g)` (62×1×26 tensor)
+- `:biased` → `observe_biased(g)` (122×1×26 tensor)
+- `:minimal_flat` → `observe_minimal_flat(g)` (330 vector)
+- `:full_flat` → `observe_full_flat(g)` (362 vector)
+- `:biased_flat` → `observe_biased_flat(g)` (422 vector)
+- `:minimal_hybrid` → `observe_minimal_hybrid(g)` (board=12×26, globals=18)
+- `:full_hybrid` → `observe_full_hybrid(g)` (board=12×26, globals=50)
+- `:biased_hybrid` → `observe_biased_hybrid(g)` (board=12×26, globals=110)
+
+# Example
+```julia
+g = initial_state(obs_type=:minimal_flat)
+obs = observe(g)  # Returns 330-element vector
+
+g2 = initial_state(obs_type=:full)
+obs2 = observe(g2)  # Returns 62×1×26 tensor
+
+g3 = initial_state(obs_type=:minimal_hybrid)
+obs3 = observe(g3)  # Returns (board=12×26 matrix, globals=18-vector)
+```
+
+See also: [`obs_dims`](@ref), [`set_obs_type!`](@ref)
+"""
+function observe(g::BackgammonGame; actions::Union{Nothing, Vector{Int}}=nothing)
+    obs_type = g.obs_type
+    if obs_type === :minimal
+        return observe_minimal(g; actions=actions)
+    elseif obs_type === :full
+        return observe_full(g; actions=actions)
+    elseif obs_type === :biased
+        return observe_biased(g; actions=actions)
+    elseif obs_type === :minimal_flat
+        return observe_minimal_flat(g; actions=actions)
+    elseif obs_type === :full_flat
+        return observe_full_flat(g; actions=actions)
+    elseif obs_type === :biased_flat
+        return observe_biased_flat(g; actions=actions)
+    elseif obs_type === :minimal_hybrid
+        return observe_minimal_hybrid(g; actions=actions)
+    elseif obs_type === :full_hybrid
+        return observe_full_hybrid(g; actions=actions)
+    elseif obs_type === :biased_hybrid
+        return observe_biased_hybrid(g; actions=actions)
+    else
+        error("Unknown observation type: $obs_type. Valid types: :minimal, :full, :biased, :minimal_flat, :full_flat, :biased_flat, :minimal_hybrid, :full_hybrid, :biased_hybrid")
+    end
+end
+
+"""
+    obs_dims(g::BackgammonGame) -> Tuple or Int
+
+Return the dimensions of observations for game's configured `obs_type`.
+
+Returns a tuple (channels, height, width) for 3D observations,
+or an integer for flat observations.
+
+# Example
+```julia
+g = initial_state(obs_type=:minimal_flat)
+dims = obs_dims(g)  # Returns 330
+
+g2 = initial_state(obs_type=:full)
+dims2 = obs_dims(g2)  # Returns (62, 1, 26)
+```
+
+See also: [`observe`](@ref), [`obs_dims`](@ref) (Symbol version)
+"""
+function obs_dims(g::BackgammonGame)
+    return obs_dims(g.obs_type)
+end
+
+"""
+    obs_dims(obs_type::Symbol) -> Tuple or Int
+
+Return the dimensions for a given observation type.
+
+# Example
+```julia
+obs_dims(:minimal)       # Returns (30, 1, 26)
+obs_dims(:minimal_flat)  # Returns 330
+```
+"""
+function obs_dims(obs_type::Symbol)
+    if obs_type === :minimal
+        return (OBS_CHANNELS_MINIMAL, 1, OBS_WIDTH)
+    elseif obs_type === :full
+        return (OBS_CHANNELS_FULL, 1, OBS_WIDTH)
+    elseif obs_type === :biased
+        return (OBS_CHANNELS_BIASED, 1, OBS_WIDTH)
+    elseif obs_type === :minimal_flat
+        return OBS_FLAT_MINIMAL
+    elseif obs_type === :full_flat
+        return OBS_FLAT_FULL
+    elseif obs_type === :biased_flat
+        return OBS_FLAT_BIASED
+    elseif obs_type === :minimal_hybrid
+        return (board=OBS_HYBRID_BOARD, globals=OBS_HYBRID_GLOBALS_MINIMAL)
+    elseif obs_type === :full_hybrid
+        return (board=OBS_HYBRID_BOARD, globals=OBS_HYBRID_GLOBALS_FULL)
+    elseif obs_type === :biased_hybrid
+        return (board=OBS_HYBRID_BOARD, globals=OBS_HYBRID_GLOBALS_BIASED)
+    else
+        error("Unknown observation type: $obs_type. Valid types: :minimal, :full, :biased, :minimal_flat, :full_flat, :biased_flat, :minimal_hybrid, :full_hybrid, :biased_hybrid")
+    end
+end
+
+"""
+    set_obs_type!(g::BackgammonGame, obs_type::Symbol)
+
+Change the observation type for an existing game.
+
+Valid types: `:minimal`, `:full`, `:biased`, `:minimal_flat`, `:full_flat`, `:biased_flat`
+
+# Example
+```julia
+g = initial_state()
+set_obs_type!(g, :full_flat)
+obs = observe(g)  # Now returns 362-element vector
+```
+"""
+function set_obs_type!(g::BackgammonGame, obs_type::Symbol)
+    # Validate obs_type
+    valid_types = (:minimal, :full, :biased, :minimal_flat, :full_flat, :biased_flat,
+                   :minimal_hybrid, :full_hybrid, :biased_hybrid)
+    if obs_type ∉ valid_types
+        error("Unknown observation type: $obs_type. Valid types: $valid_types")
+    end
+    g.obs_type = obs_type
+    return g
+end
 
 # Export channel counts for external use
 const OBSERVATION_SIZES = (
@@ -865,4 +1601,11 @@ const OBSERVATION_SIZES = (
     full = OBS_CHANNELS_FULL,
     biased = OBS_CHANNELS_BIASED,
     width = OBS_WIDTH,
+    minimal_flat = OBS_FLAT_MINIMAL,
+    full_flat = OBS_FLAT_FULL,
+    biased_flat = OBS_FLAT_BIASED,
+    hybrid_board = OBS_HYBRID_BOARD,
+    hybrid_globals_minimal = OBS_HYBRID_GLOBALS_MINIMAL,
+    hybrid_globals_full = OBS_HYBRID_GLOBALS_FULL,
+    hybrid_globals_biased = OBS_HYBRID_GLOBALS_BIASED,
 )

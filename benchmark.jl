@@ -29,7 +29,7 @@ function run_benchmark(duration_seconds=30.0)
 
         while !game_terminated(g)
             # Generate observation (as would happen in training/inference)
-            obs = vector_observation(g)
+            obs = observe_full(g)
             total_observations += 1
 
             actions = legal_actions(g)

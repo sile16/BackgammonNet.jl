@@ -77,6 +77,7 @@ Mutable game state for backgammon, using bitboard representation.
 - `reward::Float32`: Final reward from P0's perspective (±1 single, ±2 gammon, ±3 backgammon)
 - `history::Vector{Int}`: Action history for this game
 - `doubles_only::Bool`: If true, all dice rolls are doubles (for training variants)
+- `obs_type::Symbol`: Observation type for observe(g) dispatch
 
 # Internal Buffers (pre-allocated to reduce GC pressure)
 - `_actions_buffer`: Buffer for legal action generation
@@ -93,6 +94,7 @@ mutable struct BackgammonGame
     reward::Float32
     history::Vector{Int}
     doubles_only::Bool # If true, all dice rolls are doubles
+    obs_type::Symbol   # Observation type: :minimal, :full, :biased, :minimal_flat, :full_flat, :biased_flat
     _actions_buffer::Vector{Int}    # Pre-allocated buffer for legal_actions (reduces GC)
     _actions_cached::Bool           # True if _actions_buffer contains valid cached actions
     _sources_buffer1::Vector{Int}   # Pre-allocated buffer for source locations
@@ -128,22 +130,14 @@ function _create_game_buffers()
     return history, actions_buf, src_buf1, src_buf2
 end
 
-function BackgammonGame(p0, p1, dice, remaining, cp, term, rew)
+function BackgammonGame(p0, p1, dice, remaining, cp, term, rew; obs_type::Symbol=:minimal_flat)
     history, actions_buf, src_buf1, src_buf2 = _create_game_buffers()
-    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, actions_buf, false, src_buf1, src_buf2)
+    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, obs_type, actions_buf, false, src_buf1, src_buf2)
 end
 
-function BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history)
+function BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history; obs_type::Symbol=:minimal_flat)
     _, actions_buf, src_buf1, src_buf2 = _create_game_buffers()
-    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, actions_buf, false, src_buf1, src_buf2)
-end
-
-# Backwards-compatible constructor for AlphaZero.jl (12 args, without _actions_cached)
-# AlphaZero directly constructs BackgammonGame in GI.current_state
-function BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, doubles_only,
-                        actions_buf, src_buf1, src_buf2)
-    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, doubles_only,
-                   actions_buf, false, src_buf1, src_buf2)
+    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, obs_type, actions_buf, false, src_buf1, src_buf2)
 end
 
 """
@@ -169,7 +163,7 @@ function clone(g::BackgammonGame)
     return BackgammonGame(
         g.p0, g.p1, g.dice, g.remaining_actions,
         g.current_player, g.terminated, g.reward,
-        history, g.doubles_only,
+        history, g.doubles_only, g.obs_type,
         actions_buf, false, src_buf1, src_buf2
     )
 end
@@ -300,7 +294,8 @@ many games in sequence, as it reuses the pre-allocated internal buffers.
 The same game object `g`, reset to initial state (a chance node awaiting dice roll).
 """
 function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing,
-                short_game::Bool=false, doubles_only::Bool=false)
+                short_game::Bool=false, doubles_only::Bool=false,
+                obs_type::Union{Nothing, Symbol}=nothing)
     p0, p1 = _get_initial_boards(short_game)
     cp = _resolve_first_player(first_player)
 
@@ -312,6 +307,9 @@ function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing
     g.terminated = false
     g.reward = 0.0f0
     g.doubles_only = doubles_only
+    if obs_type !== nothing
+        g.obs_type = obs_type
+    end
     g._actions_cached = false  # Invalidate legal actions cache
     empty!(g.history)
     sizehint!(g.history, HISTORY_BUFFER_SIZE)
@@ -468,7 +466,8 @@ Call `sample_chance!(g)` to roll dice before the first move, or use `step!` whic
 handles dice rolls automatically.
 """
 function initial_state(; first_player::Union{Nothing, Integer}=nothing,
-                       short_game::Bool=false, doubles_only::Bool=false)
+                       short_game::Bool=false, doubles_only::Bool=false,
+                       obs_type::Symbol=:minimal_flat)
     p0, p1 = _get_initial_boards(short_game)
     cp = _resolve_first_player(first_player)
     history, actions_buf, src_buf1, src_buf2 = _create_game_buffers()
@@ -482,6 +481,7 @@ function initial_state(; first_player::Union{Nothing, Integer}=nothing,
         0.0f0,
         history,
         doubles_only,
+        obs_type,
         actions_buf,
         false,  # _actions_cached
         src_buf1,
@@ -490,13 +490,15 @@ function initial_state(; first_player::Union{Nothing, Integer}=nothing,
 end
 
 # --- Stochastic Actions (Dice Rolls) ---
-# 21 unique outcomes for two 6-sided dice (d1 <= d2)
+# 21 unique outcomes for two 6-sided dice, stored as (high, low) where high >= low.
+# This ordering aligns with action encoding: loc1 uses dice[1] (high), loc2 uses dice[2] (low).
+# The observation dice slots also show (high, low) in slots 0 and 1.
 const DICE_OUTCOMES = [
-    (1,1), (1,2), (1,3), (1,4), (1,5), (1,6),
-    (2,2), (2,3), (2,4), (2,5), (2,6),
-    (3,3), (3,4), (3,5), (3,6),
-    (4,4), (4,5), (4,6),
-    (5,5), (5,6),
+    (1,1), (2,1), (3,1), (4,1), (5,1), (6,1),
+    (2,2), (3,2), (4,2), (5,2), (6,2),
+    (3,3), (4,3), (5,3), (6,3),
+    (4,4), (5,4), (6,4),
+    (5,5), (6,5),
     (6,6)
 ]
 

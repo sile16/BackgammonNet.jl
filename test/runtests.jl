@@ -76,7 +76,7 @@ module ObsSpatial
     point_index(pt::Int) = pt + 1   # Point 1 → index 2, Point 24 → index 25
 end
 
-function make_test_game(; board=nothing, dice=(1, 2), remaining=1, current_player=0)
+function make_test_game(; board=nothing, dice=(1, 2), remaining=1, current_player=0, obs_type::Symbol=:minimal_flat)
     # Parse Canonical Board Vector into Bitboards
     p0 = UInt128(0)
     p1 = UInt128(0)
@@ -129,7 +129,10 @@ function make_test_game(; board=nothing, dice=(1, 2), remaining=1, current_playe
         end
     end
 
-    d = SVector{2, Int8}(dice[1], dice[2])
+    # Store dice as (high, low) to match DICE_OUTCOMES convention
+    d_high = max(dice[1], dice[2])
+    d_low = min(dice[1], dice[2])
+    d = SVector{2, Int8}(d_high, d_low)
     # Use the short constructor which creates the buffers
     return BackgammonNet.BackgammonGame(
         p0, p1,
@@ -137,7 +140,8 @@ function make_test_game(; board=nothing, dice=(1, 2), remaining=1, current_playe
         Int8(remaining),
         Int8(current_player),
         false,
-        0.0f0
+        0.0f0;
+        obs_type=obs_type
     )
 end
 
@@ -155,15 +159,14 @@ end
     @testset "Stochastic Steps" begin
         g = initial_state()
         @test is_chance_node(g)
-        
-        # Manually set dice to (3, 4) -> index 13
-        # DICE_OUTCOMES[13] is (3,4)
+
+        # DICE_OUTCOMES[13] is now (4,3) - stored as (high, low)
         apply_chance!(g, 13)
-        @test g.dice == [3, 4]
+        @test g.dice == [4, 3]  # (high, low) ordering
         @test !is_chance_node(g)
         @test g.remaining_actions == 1
-        
-        # Doubles (2, 2) -> index 7
+
+        # Doubles (2, 2) -> index 7 (same value for doubles)
         g = initial_state()
         apply_chance!(g, 7)
         @test g.dice == [2, 2]
@@ -297,19 +300,18 @@ end
         b[7] = -2 # Block 7 (1+6) and (6+1)
         
         g = make_test_game(board=b, dice=(1, 6))
-        
+        # Stored as (6, 1) - high die first
+
         actions = legal_actions(g)
-        
-        # Expected: Pass D1, Bar->6 (D2)? 
-        # Or Bar->1 (D1), Pass D2?
-        # Maximize dice? 6 > 1.
-        # Should prefer using D2 (6).
-        # So Pass(D1), Bar(D2). -> (PASS, BAR) = (25, 0).
-        
-        a_pass_bar = BackgammonNet.encode_action(PASS, BAR)
-        
+
+        # Must use higher die when only one can be used.
+        # dice[1]=6 (high), dice[2]=1 (low). loc1 uses high die, loc2 uses low die.
+        # Only 6 can enter (to point 6), 1 is blocked (point 1 has our checker, point 2 blocked)
+        # So: loc1=BAR (using die 6), loc2=PASS
+        a_bar_pass = BackgammonNet.encode_action(BAR, PASS)
+
         @test length(actions) == 1
-        @test actions[1] == a_pass_bar
+        @test actions[1] == a_bar_pass
     end
     
     @testset "Legal Actions: Doubles" begin
@@ -375,26 +377,30 @@ end
         b[5] = 1   # Checker at 5
         b[6] = -2  # Block at 6 (blocks die 1: 5+1=6)
         b[11] = -2 # Block at 11 (blocks 10+1 after 5->10)
+        # dice=(1,5) stored as (5,1): dice[1]=5 (high), dice[2]=1 (low)
         # Die 5: 5->10 is open, but 10->11 blocked, so only one die usable
         g = make_test_game(board=b, dice=(1, 5), current_player=0)
         actions = legal_actions(g)
         # Die 1: 5->6 blocked
         # Die 5: 5->10 open, then die 1: 10->11 blocked
         # Only die 5 can be used (higher die anyway)
+        # loc1=5 (use high die from 5), loc2=PASS
         @test length(actions) == 1
-        @test actions[1] == BackgammonNet.encode_action(PASS, 5)  # PASS d1, use d2 from 5
+        @test actions[1] == BackgammonNet.encode_action(5, PASS)
 
         # Scenario 3: Only one die works due to blocking - must use higher die
         b = zeros(MVector{28, Int8})
         b[1] = 1   # Checker at 1
         b[3] = -2  # Block at 3 (blocks die 2: 1+2=3)
         b[7] = -2  # Block at 7 (blocks 5+2 after using die 4)
+        # dice=(2,4) stored as (4,2): dice[1]=4 (high), dice[2]=2 (low)
         g = make_test_game(board=b, dice=(2, 4), current_player=0)
         actions = legal_actions(g)
         # Die 2: 1->3 blocked. Die 4: 1->5 open, then 5->7 blocked.
         # Only die 4 works (higher), so must use it
+        # loc1=1 (use high die from 1), loc2=PASS
         @test length(actions) == 1
-        @test actions[1] == BackgammonNet.encode_action(PASS, 1)  # PASS d1=2, use d2=4 from point 1
+        @test actions[1] == BackgammonNet.encode_action(1, PASS)
 
         # Scenario 4: Both dice blocked - PASS|PASS
         b = zeros(MVector{28, Int8})
@@ -415,24 +421,28 @@ end
         b[1] = 1   # Single checker at 1
         b[3] = -2  # Block at 3 (blocks die 2: 1+2=3)
         b[6] = -2  # Block at 6 (blocks 4+2 after using die 3)
+        # dice=(2,3) stored as (3,2): dice[1]=3 (high), dice[2]=2 (low)
         # Die 3: 1->4 open, then die 2: 4->6 blocked
         g = make_test_game(board=b, dice=(2, 3), current_player=0)
         actions = legal_actions(g)
         # Only die 3 works (higher), so must use it
+        # loc1=1 (use high die from 1), loc2=PASS
         @test length(actions) == 1
-        @test actions[1] == BackgammonNet.encode_action(PASS, 1)  # PASS d1=2, use d2=3 from 1
+        @test actions[1] == BackgammonNet.encode_action(1, PASS)
 
         # Scenario 6: Lower die works, higher doesn't - must use lower (only option)
         b = zeros(MVector{28, Int8})
         b[1] = 1   # Single checker at 1
         b[4] = -2  # Block at 4 (blocks die 3: 1+3=4)
         b[6] = -2  # Block at 6 (blocks 3+3 after using die 2)
+        # dice=(2,3) stored as (3,2): dice[1]=3 (high), dice[2]=2 (low)
         # Die 2: 1->3 open, then die 3: 3->6 blocked
         g = make_test_game(board=b, dice=(2, 3), current_player=0)
         actions = legal_actions(g)
         # Only die 2 works (lower), so must use it
+        # loc1=PASS (high die blocked), loc2=1 (use low die from 1)
         @test length(actions) == 1
-        @test actions[1] == BackgammonNet.encode_action(1, PASS)  # use d1=2 from 1, PASS d2=3
+        @test actions[1] == BackgammonNet.encode_action(PASS, 1)
 
         # Scenario 7: Only lower die works (all paths with higher die blocked)
         b = zeros(MVector{28, Int8})
@@ -440,12 +450,14 @@ end
         b[4] = -2  # Block at 4 (blocks die 3: 1+3=4)
         b[5] = -2  # Block at 5
         b[6] = -2  # Block at 6 (blocks 3+3=6 after 1->3)
+        # dice=(2,3) stored as (3,2): dice[1]=3 (high), dice[2]=2 (low)
         g = make_test_game(board=b, dice=(2, 3), current_player=0)
         actions = legal_actions(g)
         # Die 2: 1->3 open, then die 3: 3->6 blocked. Die 3: 1->4 blocked.
         # Only die 2 works, must use lower die as only option
+        # loc1=PASS (high die blocked), loc2=1 (use low die from 1)
         @test length(actions) == 1
-        @test actions[1] == BackgammonNet.encode_action(1, PASS)
+        @test actions[1] == BackgammonNet.encode_action(PASS, 1)
 
         # Scenario 8: Bar entry - higher die must be used
         b = zeros(MVector{28, Int8})
@@ -463,26 +475,30 @@ end
         b[25] = 1  # On bar
         b[2] = -2  # Block entry point 2 (blocks die 2)
         b[7] = -2  # Block at 7 (blocks 5+2 after bar entry)
+        # dice=(2,5) stored as (5,2): dice[1]=5 (high), dice[2]=2 (low)
         # Entry point 5 open, but subsequent move blocked
         g = make_test_game(board=b, dice=(2, 5), current_player=0)
         actions = legal_actions(g)
         # Die 5 can enter (Bar->5), then die 2: 5->7 blocked
         # Only one die usable (die 5, which is higher)
+        # loc1=BAR (use high die to enter), loc2=PASS
         @test length(actions) == 1
-        @test actions[1] == BackgammonNet.encode_action(PASS, BAR)  # PASS d1=2, Bar with d2=5
+        @test actions[1] == BackgammonNet.encode_action(BAR, PASS)
 
         # Scenario 10: Bearing off - must use higher die if only one works
         b = zeros(MVector{28, Int8})
         b[24] = 1  # Single checker at 24 (in home)
         b[27] = 14 # 14 already off
+        # dice=(1,3) stored as (3,1): dice[1]=3 (high), dice[2]=1 (low)
         g = make_test_game(board=b, dice=(1, 3), current_player=0)
         actions = legal_actions(g)
         # Die 1: 24+1=25=off (exact)
         # Die 3: 24+3=27=off (over-bear, valid since 24 is highest)
         # Both work! So must use both... but only one checker!
         # With one checker, can only use one die. Must use higher (3).
+        # loc1=24 (use high die from 24), loc2=PASS
         @test length(actions) == 1
-        @test actions[1] == BackgammonNet.encode_action(PASS, 24)  # PASS d1=1, use d2=3
+        @test actions[1] == BackgammonNet.encode_action(24, PASS)
     end
 
     @testset "Maximize Dice Rule" begin
@@ -537,19 +553,17 @@ end
         b[10] = 1  # Checker at 10
         b[3] = -2  # Block at 3 (blocks 1+2)
         b[13] = -2 # Block at 13 (blocks 10+3)
+        # dice=(2, 3) stored as (3, 2): dice[1]=3 (high), dice[2]=2 (low)
         g = make_test_game(board=b, dice=(2, 3), current_player=0)
         actions = legal_actions(g)
-        # d1=2 from 1: 1->3 blocked
-        # d1=2 from 10: 10->12 open
-        # d2=3 from 1: 1->4 open
-        # d2=3 from 10: 10->13 blocked
-        # Can we use both? 10->12 (d1), then 1->4 (d2)? Yes!
-        # Or 1->4 (d2), then 10->12 (d1)? Yes!
-        a_both = BackgammonNet.encode_action(10, 1)  # d1 from 10, d2 from 1
+        # loc1 uses high die (3): 1->4 open, 10->13 blocked
+        # loc2 uses low die (2): 1->3 blocked, 10->12 open
+        # Can we use both? 1->4 (high), then 10->12 (low)? Yes!
+        a_both = BackgammonNet.encode_action(1, 10)  # high die from 1, low die from 10
         @test a_both in actions
         # Single die actions should NOT be in results
-        a_single1 = BackgammonNet.encode_action(10, PASS)
-        a_single2 = BackgammonNet.encode_action(PASS, 1)
+        a_single1 = BackgammonNet.encode_action(1, PASS)   # high die only
+        a_single2 = BackgammonNet.encode_action(PASS, 10)  # low die only
         @test !(a_single1 in actions)
         @test !(a_single2 in actions)
 
@@ -642,40 +656,33 @@ end
             b[10] = 1
             b[3] = -2 # Blocked
             b[4] = -1 # Blot (Hit)
-            
+
+            # dice=(3, 4) stored as (4, 3): dice[1]=4 (high), dice[2]=3 (low)
             g = make_test_game(board=b, dice=(3, 4))
-            
+
             actions = legal_actions(g)
-            
-            # Dice 3, 4.
-            # D1(3): Bar->3 (Blocked).
-            # D2(4): Bar->4 (Hit).
-            
-            # Path A (D1 then D2):
-            # D1 blocked from Bar.
-            # Path B (D2 then D1):
-            # Bar->4 (Hit). Rem D1(3).
-            # From new state (Bar empty).
-            # Can move 4->7? (4+3=7).
-            # Can move 10->13? (10+3=13).
-            
-            # Actions: (4, BAR). 
-            # Note: 4 is source for D1? No.
-            # Encode is (S1, S2). S1 uses D1. S2 uses D2.
-            # We used D2 for Bar. So S2=BAR.
-            # S1 used for other move.
-            # If we move 4->7 using D1? S1=4. -> (4, BAR).
-            # If we move 10->13 using D1? S1=10. -> (10, BAR).
-            
-            a1 = BackgammonNet.encode_action(4, BAR) 
-            a2 = BackgammonNet.encode_action(10, BAR) 
-            
+
+            # High die (4): Bar->4 (Hit) - LEGAL
+            # Low die (3): Bar->3 (Blocked)
+            #
+            # Must enter from bar first. Only high die (4) can enter.
+            # After Bar->4 (using high die), low die (3) can move:
+            # - 4->7 (4+3=7)
+            # - 10->13 (10+3=13)
+            #
+            # Actions:
+            # loc1=BAR (high die enters), loc2=4 (low die from 4->7)
+            # loc1=BAR (high die enters), loc2=10 (low die from 10->13)
+
+            a1 = BackgammonNet.encode_action(BAR, 4)
+            a2 = BackgammonNet.encode_action(BAR, 10)
+
             @test length(actions) > 0
             for a in actions
                 l1, l2 = BackgammonNet.decode_action(a)
-                @test l2 == BAR
+                @test l1 == BAR  # High die always enters from bar
             end
-            
+
             @test a1 in actions
             @test a2 in actions
         end
@@ -831,11 +838,12 @@ end
             b[24] = 1
             b[28] = -1 # Opponent has one off to avoid Gammon
 
+            # dice=(1, 2) stored as (2, 1): dice[1]=2 (high), dice[2]=1 (low)
             g = make_test_game(board=b, dice=(1, 2))
 
             # Only one checker, must use higher die (2) to bear off
-            # 24->Off (2). Pass (1).
-            act = BackgammonNet.encode_action(PASS, 24)
+            # loc1 (high die 2): 24->off. loc2 (low die 1): PASS
+            act = BackgammonNet.encode_action(24, PASS)
 
             BackgammonNet.step!(g, act)
 
@@ -849,11 +857,14 @@ end
             b[1] = 1
             b[2] = -1 # Opponent Blot
 
+            # dice=(1, 6) stored as (6, 1): dice[1]=6 (high), dice[2]=1 (low)
             g = make_test_game(board=b, dice=(1, 6))
 
-            # Both dice can be used: 1->2 (hit with D1), then 2->8 (D2)
-            # Action encodes sources for each die: (1, 2)
-            act = BackgammonNet.encode_action(1, 2)
+            # Both dice can be used. Two orderings:
+            # 1->2 (low die 1, hit), then 2->8 (high die 6) → encode_action(2, 1)
+            # 1->7 (high die 6), then 7->8 (low die 1) → encode_action(1, 7)
+            # Using first ordering: loc1=2 (high from 2 after hit), loc2=1 (low from 1)
+            act = BackgammonNet.encode_action(2, 1)
 
             BackgammonNet.step!(g, act)
 
@@ -1409,6 +1420,55 @@ end
         obs_bearoff = observe_minimal(g_bearoff)
         # Should be able to use both dice in correct order
         @test obs_bearoff[BIN_2, 1, 1] == 1.0f0  # Bin 2 active
+    end
+
+    @testset "Move Count - Doubles Second Action" begin
+        # Test that doubles second action (remaining_actions=1) correctly computes
+        # playable moves instead of hard-coding 2
+        BIN_1 = ObsChannels.MOVE_BIN_1
+        BIN_2 = ObsChannels.MOVE_BIN_2
+
+        # Case 1: Both moves playable in second action - bin 2
+        # Two checkers at point 1 with dice 3-3, remaining=1 (second action)
+        b_both = zeros(MVector{28, Int8})
+        b_both[1] = 2  # 2 checkers at point 1
+        g_both = make_test_game(board=b_both, dice=(3, 3), remaining=1, current_player=0)
+        obs_both = observe_minimal(g_both)
+        @test obs_both[BIN_2, 1, 1] == 1.0f0  # Bin 2 active (2 moves playable)
+
+        # Case 2: Only 1 move playable in second action - bin 1
+        # Single checker blocked after one move
+        b_1move = zeros(MVector{28, Int8})
+        b_1move[1] = 1   # My checker at point 1
+        # Prime from 4-9 blocks 2nd move (checker can go 1→4 but then 4→7 blocked)
+        for pt in 4:9
+            b_1move[pt] = -2
+        end
+        g_1move = make_test_game(board=b_1move, dice=(3, 3), remaining=1, current_player=0)
+        # Wait - this has remaining=1 but the prime starts at 4, so 1+3=4 is blocked
+        # Let me reconsider: 1+3=4 is blocked, so 0 moves playable
+        # Need a different setup: checker can make 1 move, then blocked
+
+        # Better setup: checker at 1, blocks at 7-12 (6-prime)
+        # With dice 3-3: 1→4 (ok), 4→7 (blocked)
+        b_1move2 = zeros(MVector{28, Int8})
+        b_1move2[1] = 1
+        for pt in 7:12
+            b_1move2[pt] = -2
+        end
+        g_1move2 = make_test_game(board=b_1move2, dice=(3, 3), remaining=1, current_player=0)
+        obs_1move2 = observe_minimal(g_1move2)
+        @test obs_1move2[BIN_1, 1, 1] == 1.0f0  # Bin 1 active (1 move playable)
+        @test obs_1move2[BIN_2, 1, 1] == 0.0f0  # Bin 2 inactive
+
+        # Case 3: 0 moves playable in second action - all bins 0
+        # Checker on bar, entry points blocked
+        b_0move = zeros(MVector{28, Int8})
+        b_0move[25] = 1  # My checker on bar
+        b_0move[3] = -2  # Block entry point 3 (dice 3-3)
+        g_0move = make_test_game(board=b_0move, dice=(3, 3), remaining=1, current_player=0)
+        obs_0move = observe_minimal(g_0move)
+        @test all(obs_0move[ObsChannels.MOVE_COUNT_START:ObsChannels.MOVE_COUNT_END, 1, 1] .== 0.0f0)
     end
 
     @testset "Off Counts Encoding" begin
@@ -2522,6 +2582,46 @@ end
                 end
             end
         end
+
+        @testset "clone() creates independent copy" begin
+            # Create a game and play a few moves
+            g = initial_state(first_player=0)
+            sample_chance!(g, MersenneTwister(42))
+            actions = legal_actions(g)
+            step!(g, actions[1], MersenneTwister(42))
+
+            # Clone it
+            g_copy = clone(g)
+
+            # Verify state matches
+            @test g_copy.p0 == g.p0
+            @test g_copy.p1 == g.p1
+            @test g_copy.dice == g.dice
+            @test g_copy.remaining_actions == g.remaining_actions
+            @test g_copy.current_player == g.current_player
+            @test g_copy.terminated == g.terminated
+            @test g_copy.reward == g.reward
+            @test g_copy.doubles_only == g.doubles_only
+            @test g_copy.history == g.history
+
+            # Verify buffers are independent (not same object)
+            @test g_copy._actions_buffer !== g._actions_buffer
+            @test g_copy._sources_buffer1 !== g._sources_buffer1
+            @test g_copy._sources_buffer2 !== g._sources_buffer2
+            @test g_copy.history !== g.history
+
+            # Verify cache is invalidated on clone
+            @test !g_copy._actions_cached
+
+            # Modify clone and verify original unchanged
+            sample_chance!(g_copy, MersenneTwister(1))
+            actions_copy = legal_actions(g_copy)
+            step!(g_copy, actions_copy[1], MersenneTwister(1))
+
+            @test g_copy.p0 != g.p0 || g_copy.p1 != g.p1 || g_copy.dice != g.dice
+            @test length(g_copy.history) > length(g.history)
+        end
+
     end
 
     @testset "Dice Encoding Edge Cases" begin
@@ -2559,6 +2659,223 @@ end
     # NOTE: Old observation tests for blot/block detection and pip count difference
     # have been removed as they tested the legacy observation API which has been
     # replaced by the new 3-tier observation system (minimal, full, biased).
+
+    @testset "Flat Observations" begin
+        @testset "observe_minimal_flat dimensions" begin
+            g = initial_state(first_player=0)
+            sample_chance!(g)
+            obs_flat = observe_minimal_flat(g)
+            @test length(obs_flat) == OBS_FLAT_MINIMAL
+            @test length(obs_flat) == 330
+        end
+
+        @testset "observe_full_flat dimensions" begin
+            g = initial_state(first_player=0)
+            sample_chance!(g)
+            obs_flat = observe_full_flat(g)
+            @test length(obs_flat) == OBS_FLAT_FULL
+            @test length(obs_flat) == 362
+        end
+
+        @testset "observe_biased_flat dimensions" begin
+            g = initial_state(first_player=0)
+            sample_chance!(g)
+            obs_flat = observe_biased_flat(g)
+            @test length(obs_flat) == OBS_FLAT_BIASED
+            @test length(obs_flat) == 422
+        end
+
+        @testset "flat vs 3D feature equivalence" begin
+            # Test that flat and 3D produce same feature values
+            g = initial_state(first_player=0)
+            sample_chance!(g)
+
+            obs_3d = observe_minimal(g)
+            obs_flat = observe_minimal_flat(g)
+
+            # Check board encoding (312 values)
+            # 3D: channels 1-12 across width 26
+            # Flat: positions 1-312 as [pos1_my_thresh1-6, pos1_opp_thresh1-6, pos2_..., ...]
+            for w in 1:26
+                for ch in 1:6
+                    # My checker thresholds
+                    flat_idx = (w-1)*12 + ch
+                    @test obs_flat[flat_idx] == obs_3d[ch, 1, w]
+                    # Opp checker thresholds
+                    flat_idx_opp = (w-1)*12 + 6 + ch
+                    @test obs_flat[flat_idx_opp] == obs_3d[6+ch, 1, w]
+                end
+            end
+
+            # Check dice encoding (12 values at indices 313-324)
+            # High die one-hot (6 values)
+            for v in 1:6
+                @test obs_flat[312 + v] == obs_3d[12 + v, 1, 1]
+            end
+            # Low die one-hot (6 values)
+            for v in 1:6
+                @test obs_flat[318 + v] == obs_3d[18 + v, 1, 1]
+            end
+
+            # Check move count encoding (4 values at indices 325-328)
+            for bin in 1:4
+                @test obs_flat[324 + bin] == obs_3d[24 + bin, 1, 1]
+            end
+
+            # Check off counts (2 values at indices 329-330)
+            @test obs_flat[329] == obs_3d[29, 1, 1]
+            @test obs_flat[330] == obs_3d[30, 1, 1]
+        end
+
+        @testset "flat in-place version" begin
+            g = initial_state(first_player=0)
+            sample_chance!(g)
+
+            obs_alloc = observe_minimal_flat(g)
+            obs_inplace = zeros(Float32, OBS_FLAT_MINIMAL)
+            observe_minimal_flat!(obs_inplace, g)
+
+            @test obs_alloc == obs_inplace
+        end
+
+        @testset "OBSERVATION_SIZES includes flat" begin
+            @test OBSERVATION_SIZES.minimal_flat == 330
+            @test OBSERVATION_SIZES.full_flat == 362
+            @test OBSERVATION_SIZES.biased_flat == 422
+        end
+
+        @testset "observe() dispatches on obs_type" begin
+            # Test flat observations
+            g_flat = initial_state(first_player=0, obs_type=:minimal_flat)
+            sample_chance!(g_flat)
+            obs_flat = observe(g_flat)
+            @test obs_flat isa Vector{Float32}
+            @test length(obs_flat) == 330
+
+            # Test 3D observations
+            g_3d = initial_state(first_player=0, obs_type=:full)
+            sample_chance!(g_3d)
+            obs_3d = observe(g_3d)
+            @test obs_3d isa Array{Float32, 3}
+            @test size(obs_3d) == (62, 1, 26)
+
+            # Test all observation types
+            for (obs_type, expected_size) in [
+                (:minimal, (30, 1, 26)),
+                (:full, (62, 1, 26)),
+                (:biased, (122, 1, 26)),
+                (:minimal_flat, 330),
+                (:full_flat, 362),
+                (:biased_flat, 422),
+            ]
+                g = initial_state(first_player=0, obs_type=obs_type)
+                sample_chance!(g)
+                obs = observe(g)
+                if obs_type in (:minimal, :full, :biased)
+                    @test size(obs) == expected_size
+                else
+                    @test length(obs) == expected_size
+                end
+            end
+        end
+
+        @testset "obs_dims returns correct dimensions" begin
+            # Test game-level obs_dims
+            g = initial_state(obs_type=:minimal_flat)
+            @test obs_dims(g) == 330
+
+            g2 = initial_state(obs_type=:full)
+            @test obs_dims(g2) == (62, 1, 26)
+
+            # Test symbol-level obs_dims
+            @test obs_dims(:minimal) == (30, 1, 26)
+            @test obs_dims(:full) == (62, 1, 26)
+            @test obs_dims(:biased) == (122, 1, 26)
+            @test obs_dims(:minimal_flat) == 330
+            @test obs_dims(:full_flat) == 362
+            @test obs_dims(:biased_flat) == 422
+        end
+
+        @testset "set_obs_type! changes observation type" begin
+            g = initial_state(obs_type=:minimal_flat)
+            @test g.obs_type == :minimal_flat
+            @test obs_dims(g) == 330
+
+            set_obs_type!(g, :full)
+            @test g.obs_type == :full
+            @test obs_dims(g) == (62, 1, 26)
+
+            # Test that observe() returns correct type after change
+            sample_chance!(g)
+            obs = observe(g)
+            @test size(obs) == (62, 1, 26)
+        end
+
+        @testset "clone preserves obs_type" begin
+            g = initial_state(obs_type=:biased_flat)
+            sample_chance!(g)
+            g_clone = clone(g)
+            @test g_clone.obs_type == :biased_flat
+            @test obs_dims(g_clone) == 422
+        end
+
+        @testset "hybrid observations" begin
+            g = initial_state(first_player=0)
+            sample_chance!(g)
+
+            # Test minimal hybrid
+            obs = observe_minimal_hybrid(g)
+            @test obs isa NamedTuple
+            @test haskey(obs, :board)
+            @test haskey(obs, :globals)
+            @test size(obs.board) == (12, 26)
+            @test length(obs.globals) == 18
+
+            # Test full hybrid
+            obs_full = observe_full_hybrid(g)
+            @test size(obs_full.board) == (12, 26)
+            @test length(obs_full.globals) == 50
+
+            # Test biased hybrid
+            obs_biased = observe_biased_hybrid(g)
+            @test size(obs_biased.board) == (12, 26)
+            @test length(obs_biased.globals) == 110
+
+            # Test that board matches flat encoding
+            obs_flat = observe_minimal_flat(g)
+            for w in 1:26
+                for ch in 1:6
+                    flat_idx = (w-1)*12 + ch
+                    @test obs.board[ch, w] == obs_flat[flat_idx]
+                    flat_idx_opp = (w-1)*12 + 6 + ch
+                    @test obs.board[6+ch, w] == obs_flat[flat_idx_opp]
+                end
+            end
+
+            # Test that globals match flat encoding
+            for i in 1:18
+                @test obs.globals[i] == obs_flat[312 + i]
+            end
+        end
+
+        @testset "hybrid via observe() dispatch" begin
+            g = initial_state(obs_type=:minimal_hybrid)
+            sample_chance!(g)
+            obs = observe(g)
+            @test obs isa NamedTuple
+            @test size(obs.board) == (12, 26)
+            @test length(obs.globals) == 18
+
+            # Test obs_dims for hybrid
+            dims = obs_dims(g)
+            @test dims.board == (12, 26)
+            @test dims.globals == 18
+
+            dims_full = obs_dims(:full_hybrid)
+            @test dims_full.board == (12, 26)
+            @test dims_full.globals == 50
+        end
+    end
 
     @testset "Precomputed Bearing-Off Masks" begin
         # Test MASK_1_18: P0 must clear indices 1-18 before bearing off
