@@ -1028,33 +1028,33 @@ end
         @test OBS_CHANNELS_MINIMAL == 38
         @test OBS_CHANNELS_FULL == 70
         @test OBS_CHANNELS_BIASED == 130
-        @test OBS_WIDTH == 25
+        @test OBS_WIDTH == 26  # My bar at 1, points at 2-25, opponent bar at 26
 
         @test OBSERVATION_SIZES.minimal == 38
         @test OBSERVATION_SIZES.full == 70
         @test OBSERVATION_SIZES.biased == 130
-        @test OBSERVATION_SIZES.width == 25
+        @test OBSERVATION_SIZES.width == 26
 
         # Test observation shapes
         g = initial_state(first_player=0)
         sample_chance!(g)
 
         obs_min = observe_minimal(g)
-        @test size(obs_min) == (38, 1, 25)
+        @test size(obs_min) == (38, 1, 26)
         @test eltype(obs_min) == Float32
 
         obs_full = observe_full(g)
-        @test size(obs_full) == (70, 1, 25)
+        @test size(obs_full) == (70, 1, 26)
         @test eltype(obs_full) == Float32
 
         obs_biased = observe_biased(g)
-        @test size(obs_biased) == (130, 1, 25)
+        @test size(obs_biased) == (130, 1, 26)
         @test eltype(obs_biased) == Float32
     end
 
     @testset "Board Threshold Encoding" begin
         # Test threshold encoding: channels 1-6 for my checkers, 7-12 for opponent
-        # Spatial layout: Bar at index 1, Point N at index N+1
+        # Spatial layout: My bar at 1, Point N at N+1, Opponent bar at 26
         b = zeros(MVector{28, Int8})
         b[5] = 3   # 3 of my checkers at point 5 (spatial index 6)
         b[10] = -2  # 2 opponent checkers at point 10 (spatial index 11)
@@ -1088,14 +1088,24 @@ end
         obs2 = observe_minimal(g2)
         @test obs2[6, 1, 21] ≈ 1.0f0 atol=1e-6  # (15-5)/10 = 1.0
 
-        # Test bar encoding (spatial index 1)
+        # Test my bar encoding (spatial index 1)
         b3 = zeros(MVector{28, Int8})
         b3[25] = 2  # My bar (index 25 in test board = my bar)
         g3 = make_test_game(board=b3, dice=(1, 2), current_player=0)
         obs3 = observe_minimal(g3)
-        @test obs3[1, 1, 1] == 1.0f0  # >=1 at bar
-        @test obs3[2, 1, 1] == 1.0f0  # >=2 at bar
-        @test obs3[3, 1, 1] == 0.0f0  # >=3 at bar
+        @test obs3[1, 1, 1] == 1.0f0  # >=1 at my bar
+        @test obs3[2, 1, 1] == 1.0f0  # >=2 at my bar
+        @test obs3[3, 1, 1] == 0.0f0  # >=3 at my bar
+
+        # Test opponent bar encoding (spatial index 26)
+        b4 = zeros(MVector{28, Int8})
+        b4[26] = -3  # Opponent bar (index 26 in test board = opponent bar)
+        g4 = make_test_game(board=b4, dice=(1, 2), current_player=0)
+        obs4 = observe_minimal(g4)
+        @test obs4[7, 1, 26] == 1.0f0   # >=1 at opponent bar
+        @test obs4[8, 1, 26] == 1.0f0   # >=2 at opponent bar
+        @test obs4[9, 1, 26] == 1.0f0   # >=3 at opponent bar
+        @test obs4[10, 1, 26] == 0.0f0  # >=4 at opponent bar
     end
 
     @testset "Dice One-Hot Encoding" begin

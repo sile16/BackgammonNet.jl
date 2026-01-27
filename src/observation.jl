@@ -7,11 +7,12 @@
 #   - Full (70 channels): + arithmetic features (no strategic bias)
 #   - Biased (130 channels): + hand-crafted strategic features
 #
-# Shape: (C, 1, 25) where width = 1 bar + 24 board points
+# Shape: (C, 1, 26) where width = 2 bars + 24 board points
 #
 # Spatial Layout (for CNN topology):
-#   Index 1: Bar (adjacent to entry points for 1D convolutions)
+#   Index 1: My bar (adjacent to my entry points 1-6)
 #   Indices 2-25: Points 1-24 in canonical order (entry → home)
+#   Index 26: Opponent bar (adjacent to their entry points 19-24)
 #
 # Design Philosophy:
 #   - Minimal: Network must learn everything from raw state
@@ -21,7 +22,7 @@
 # ============================================================================
 
 # --- Observation Dimensions ---
-const OBS_WIDTH = 25  # Bar at index 1, points 1-24 at indices 2-25
+const OBS_WIDTH = 26  # My bar at 1, points 1-24 at 2-25, opponent bar at 26
 
 # Channel counts for each tier
 const OBS_CHANNELS_MINIMAL = 38
@@ -147,15 +148,17 @@ end
 Encode board state using threshold encoding (channels 1-12).
 Per-point encoding with 6 channels per player.
 
-Spatial layout: [Bar, Point1, Point2, ..., Point24]
-- Index 1: Bar (for CNN topology - adjacent to entry points 1-6)
+Spatial layout: [MyBar, Point1, ..., Point24, OppBar]
+- Index 1: My bar (adjacent to my entry points 1-6 at indices 2-7)
 - Indices 2-25: Points 1-24 in canonical order
+- Index 26: Opponent bar (adjacent to their entry points 19-24 at indices 20-25)
 """
 function _encode_board!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
-    # Bar at spatial index 1 (for CNN topology - adjacent to entry points)
     my_bar, opp_bar = _get_bar_counts(g)
+
+    # My bar at spatial index 1 (adjacent to my entry points 1-6)
     _encode_threshold_6!(obs, 0, 1, my_bar)
-    _encode_threshold_6!(obs, 6, 1, opp_bar)
+    _encode_threshold_6!(obs, 6, 1, 0)  # No opponent checkers on my bar
 
     # Points 1-24 at spatial indices 2-25
     @inbounds for pt in 1:24
@@ -163,6 +166,10 @@ function _encode_board!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
         _encode_threshold_6!(obs, 0, pt + 1, my_count)
         _encode_threshold_6!(obs, 6, pt + 1, opp_count)
     end
+
+    # Opponent bar at spatial index 26 (adjacent to their entry points 19-24)
+    _encode_threshold_6!(obs, 0, 26, 0)  # No my checkers on opponent bar
+    _encode_threshold_6!(obs, 6, 26, opp_bar)
 
     return nothing
 end
@@ -545,7 +552,7 @@ end
 """
     observe_minimal(g::BackgammonGame) -> Array{Float32,3}
 
-Generate minimal observation (38 channels). Shape: (38, 1, 25).
+Generate minimal observation (38 channels). Shape: (38, 1, 26).
 
 The network must learn all strategic concepts from raw state.
 
@@ -556,9 +563,10 @@ The network must learn all strategic concepts from raw state.
 - 37-38: Off counts (/15)
 
 # Spatial Dimension (for CNN topology)
-Width 25 = [Bar, Point1, Point2, ..., Point24]
-- Index 1: Bar (adjacent to entry points for 1D convolutions)
+Width 26 = [MyBar, Point1, ..., Point24, OppBar]
+- Index 1: My bar (adjacent to my entry points 1-6)
 - Indices 2-25: Points 1-24 in canonical order (entry → home)
+- Index 26: Opponent bar (adjacent to their entry points 19-24)
 
 See also: [`observe_full`](@ref), [`observe_biased`](@ref)
 """

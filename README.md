@@ -91,7 +91,7 @@ Player actions are integers 1-676, encoding two source locations for the two dic
 - `chance_outcomes(g)`: Returns `[(outcome_idx, prob), ...]`. In `doubles_only` mode, keeps 21 entries with 0 probability for non-doubles.
 
 ### Observation (3-Tier System)
-Three observation tiers with increasing feature complexity (shape: `C × 1 × 25`):
+Three observation tiers with increasing feature complexity (shape: `C × 1 × 26`):
 
 | Function | Channels | Description |
 |----------|----------|-------------|
@@ -100,8 +100,9 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 25
 | `observe_biased(g)` | 130 | + strategic features (primes, anchors, blots, builders) |
 
 **Spatial Layout (for CNN topology):**
-- Index 1: Bar (adjacent to entry points for 1D convolutions)
-- Indices 2-25: Points 1-24 in canonical order
+- Index 1: My bar (adjacent to my entry points 1-6)
+- Indices 2-25: Points 1-24 in canonical order (entry → home)
+- Index 26: Opponent bar (adjacent to their entry points 19-24)
 
 Each tier builds on the previous: `full[1:38] == minimal`, `biased[1:70] == full`.
 

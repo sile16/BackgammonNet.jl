@@ -124,7 +124,7 @@ A game starts at a chance node (dice = [0,0]). Call `sample_chance!` or use `ste
 
 ### Observation System (3-Tier)
 
-Three observation tiers with increasing feature complexity (shape: `C × 1 × 25`):
+Three observation tiers with increasing feature complexity (shape: `C × 1 × 26`):
 
 | Tier | Channels | Content |
 |------|----------|---------|
@@ -133,10 +133,11 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 25
 | `observe_biased` | 130 | + strategic features (primes, anchors, blots, builders) |
 
 **Spatial layout (for CNN topology):**
-- Index 1: Bar (adjacent to entry points for 1D convolutions)
+- Index 1: My bar (adjacent to my entry points 1-6)
 - Indices 2-25: Points 1-24 in canonical order (entry → home)
+- Index 26: Opponent bar (adjacent to their entry points 19-24)
 
-This layout enables 1D CNN kernels to naturally capture the bar→entry point relationship since checkers enter the board from bar to points 1-6.
+This symmetric layout enables 1D CNN kernels to naturally capture both bar→entry point relationships: my bar adjacent to points 1-6, and opponent's bar adjacent to points 19-24.
 
 **Hierarchy property:** Each tier extends the previous (`full[1:38] == minimal`, `biased[1:70] == full`).
 
