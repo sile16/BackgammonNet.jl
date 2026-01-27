@@ -143,6 +143,37 @@ This symmetric layout enables 1D CNN kernels to naturally capture both bar→ent
 
 **In-place versions:** `observe_minimal!`, `observe_full!`, `observe_biased!` for high-throughput scenarios (MCTS, batch eval) to avoid GC pressure.
 
+**Design rationale for Width 26:**
+- Entry logic: MyBar (Index 1) adjacent to Point 1 (Index 2) allows kernels to learn "can I enter?" patterns
+- Defense logic: OppBar (Index 26) adjacent to Point 24 (Index 25) allows kernels to detect home board threats
+- Off counts stay as global scalars (channels 37-38) since they don't have spatial adjacency relationships
+
+**Known limitation - dice slots for non-doubles:**
+- When `remaining_actions == 1` for non-doubles, both dice are still visible in the observation
+- The game state doesn't track which specific die was used
+- This is acceptable since legal action masks filter invalid moves
+
+### Test Utilities (`test/runtests.jl`)
+
+The `make_test_game` helper uses **perspective-relative** board indices:
+
+```
+Board indices 1-24: Points (canonical coordinates)
+  - Positive values = my checkers
+  - Negative values = opponent checkers
+
+Board indices 25-28 (bars and off):
+  - Index 25: My bar (positive count)
+  - Index 26: Opponent bar (negative count)
+  - Index 27: My off (positive count)
+  - Index 28: Opponent off (negative count)
+```
+
+When `current_player=0`: "my" = P0, "opponent" = P1
+When `current_player=1`: "my" = P1, "opponent" = P0
+
+This abstracts away the physical bitboard layout for easier test writing.
+
 ### Performance Tradeoffs in legal_actions
 
 **Why `unique!(actions)` is needed:**
