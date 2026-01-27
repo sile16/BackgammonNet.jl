@@ -4,8 +4,8 @@
 #
 # Provides three observation types that build on each other:
 #   - Minimal (38 channels): Raw board + dice only
-#   - Full (70 channels): + arithmetic features (no strategic bias)
-#   - Biased (130 channels): + hand-crafted strategic features
+#   - Full (69 channels): + arithmetic features (no strategic bias)
+#   - Biased (129 channels): + hand-crafted strategic features
 #
 # Shape: (C, 1, 25) where width = 24 board points + 1 bar position
 #
@@ -138,7 +138,7 @@ end
 """
     _encode_board!(obs, g)
 
-Encode board state using threshold encoding (channels 0-11).
+Encode board state using threshold encoding (channels 1-12).
 Per-point encoding with 6 channels per player.
 """
 function _encode_board!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
@@ -212,7 +212,8 @@ end
 """
     _encode_dice_onehot!(obs, g)
 
-Encode dice using one-hot encoding for 4 slots (channels 12-35).
+Encode dice using one-hot encoding for 4 slots (channels 13-36).
+Slots are ordered high-to-low (largest die value first).
 Each slot gets 6 channels for values 1-6. All zeros if slot is empty.
 """
 function _encode_dice_onehot!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
@@ -238,7 +239,7 @@ end
 """
     _encode_off!(obs, g)
 
-Encode borne-off counts (channels 36-37).
+Encode borne-off counts (channels 37-38).
 """
 function _encode_off!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
     my_off, opp_off = _get_off_counts(g)
@@ -522,11 +523,11 @@ Generate minimal observation (38 channels). Shape: (38, 1, 25).
 
 The network must learn all strategic concepts from raw state.
 
-# Channels
-- 0-5: My checker thresholds (>=1, >=2, >=3, >=4, >=5, 6+)
-- 6-11: Opponent checker thresholds
-- 12-35: Dice one-hot (4 slots × 6 values)
-- 36-37: Off counts (/15)
+# Channels (1-indexed)
+- 1-6: My checker thresholds (>=1, >=2, >=3, >=4, >=5, 6+)
+- 7-12: Opponent checker thresholds
+- 13-36: Dice one-hot (4 slots × 6 values, ordered high-to-low)
+- 37-38: Off counts (/15)
 
 # Spatial Dimension
 Width 25 = 24 board points + 1 bar position (index 25).
@@ -584,7 +585,7 @@ end
 """
     observe_full!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
 
-In-place version of `observe_full`. Fills channels 1-70.
+In-place version of `observe_full`. Fills channels 1-69.
 """
 function observe_full!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
     # Zero out full channels
@@ -629,7 +630,7 @@ end
 """
     observe_biased!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
 
-In-place version of `observe_biased`. Fills channels 1-130.
+In-place version of `observe_biased`. Fills channels 1-129.
 """
 function observe_biased!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
     # Zero out all channels

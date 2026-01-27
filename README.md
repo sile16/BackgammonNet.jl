@@ -95,7 +95,7 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 25
 
 | Function | Channels | Description |
 |----------|----------|-------------|
-| `observe_minimal(g)` | 38 | Raw board (threshold encoded) + dice (one-hot) + off counts |
+| `observe_minimal(g)` | 38 | Raw board (threshold encoded) + dice (one-hot, high-to-low) + off counts |
 | `observe_full(g)` | 69 | + arithmetic features (pips, contact, can_bear_off, etc.) |
 | `observe_biased(g)` | 129 | + strategic features (primes, anchors, blots, builders) |
 
@@ -131,4 +131,4 @@ julia --project benchmark.jl
 ## Structure
 - `src/game.jl`: Core structs, step logic, and state management.
 - `src/actions.jl`: Move generation, validation, and encoding.
-- `src/observation.jl`: Vectorization and canonical views.
+- `src/observation.jl`: 3-tier observation system (minimal/full/biased).
