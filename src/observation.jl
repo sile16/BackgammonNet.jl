@@ -9,10 +9,10 @@
 #
 # Shape: (C, 1, 26) where width = 2 bars + 24 board points
 #
-# Spatial Layout (for CNN topology):
-#   Index 1: My bar (adjacent to my entry points 1-6)
+# Spatial Layout (1-indexed, Julia convention):
+#   Index 1: My bar (adjacent to my entry points 1-6 at indices 2-7)
 #   Indices 2-25: Points 1-24 in canonical order (entry → home)
-#   Index 26: Opponent bar (adjacent to their entry points 19-24)
+#   Index 26: Opponent bar (adjacent to their entry points 19-24 at indices 20-25)
 #
 # Design Philosophy:
 #   - Minimal: Network must learn everything from raw state
@@ -562,11 +562,11 @@ The network must learn all strategic concepts from raw state.
 - 13-36: Dice one-hot (4 slots × 6 values, ordered high-to-low)
 - 37-38: Off counts (/15)
 
-# Spatial Dimension (for CNN topology)
+# Spatial Dimension (1-indexed, Julia convention)
 Width 26 = [MyBar, Point1, ..., Point24, OppBar]
-- Index 1: My bar (adjacent to my entry points 1-6)
+- Index 1: My bar (adjacent to my entry points 1-6 at indices 2-7)
 - Indices 2-25: Points 1-24 in canonical order (entry → home)
-- Index 26: Opponent bar (adjacent to their entry points 19-24)
+- Index 26: Opponent bar (adjacent to their entry points 19-24 at indices 20-25)
 
 See also: [`observe_full`](@ref), [`observe_biased`](@ref)
 """

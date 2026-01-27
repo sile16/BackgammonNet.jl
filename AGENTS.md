@@ -132,10 +132,10 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 26
 | `observe_full` | 70 | + arithmetic features (dice_sum, dice_delta, pips, contact, stragglers, remaining) |
 | `observe_biased` | 130 | + strategic features (primes, anchors, blots, builders) |
 
-**Spatial layout (for CNN topology):**
-- Index 1: My bar (adjacent to my entry points 1-6)
+**Spatial layout (1-indexed, Julia convention):**
+- Index 1: My bar (adjacent to my entry points 1-6 at indices 2-7)
 - Indices 2-25: Points 1-24 in canonical order (entry → home)
-- Index 26: Opponent bar (adjacent to their entry points 19-24)
+- Index 26: Opponent bar (adjacent to their entry points 19-24 at indices 20-25)
 
 This symmetric layout enables 1D CNN kernels to naturally capture both bar→entry point relationships: my bar adjacent to points 1-6, and opponent's bar adjacent to points 19-24.
 

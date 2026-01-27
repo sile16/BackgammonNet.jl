@@ -99,10 +99,10 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 26
 | `observe_full(g)` | 70 | + arithmetic features (dice_sum, dice_delta, pips, contact, etc.) |
 | `observe_biased(g)` | 130 | + strategic features (primes, anchors, blots, builders) |
 
-**Spatial Layout (for CNN topology):**
-- Index 1: My bar (adjacent to my entry points 1-6)
+**Spatial Layout (1-indexed, Julia convention):**
+- Index 1: My bar (adjacent to my entry points 1-6 at indices 2-7)
 - Indices 2-25: Points 1-24 in canonical order (entry → home)
-- Index 26: Opponent bar (adjacent to their entry points 19-24)
+- Index 26: Opponent bar (adjacent to their entry points 19-24 at indices 20-25)
 
 Each tier builds on the previous: `full[1:38] == minimal`, `biased[1:70] == full`.
 
