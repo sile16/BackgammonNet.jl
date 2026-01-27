@@ -132,3 +132,4 @@ julia --project benchmark.jl
 - `src/game.jl`: Core structs, step logic, and state management.
 - `src/actions.jl`: Move generation, validation, and encoding.
 - `src/observation.jl`: 3-tier observation system (minimal/full/biased).
+- `requirements.txt`: Python dependencies for gnubg integration and wandb logging.
