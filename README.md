@@ -69,7 +69,8 @@ end
 ### Core
 - `initial_state(; first_player=nothing, short_game=false, doubles_only=false)`: Returns a new game (starts at chance node).
 - `reset!(g; first_player=nothing, short_game=false, doubles_only=false)`: Resets game to initial state without reallocating.
-- `legal_actions(g)`: Returns valid action indices. At player nodes: 1-676 (encoding two locations). At chance nodes: 1-21 (dice outcomes). In `doubles_only` mode, use `chance_outcomes(g)` to see which have non-zero probability.
+- `clone(g)`: Creates a deep copy with fresh internal buffers (recommended for MCTS).
+- `legal_actions(g)`: Returns valid action indices (cached until state changes). At player nodes: 1-676. At chance nodes: 1-21.
 - `game_terminated(g)`: Bool.
 - `winner(g)`: Returns winning player ID (0 or 1) or `nothing` if not terminated.
 - `g.reward`: Player 0's reward (Single: ±1, Gammon: ±2, Backgammon: ±3). Positive if P0 wins.
@@ -115,6 +116,13 @@ In-place versions available: `observe_minimal!`, `observe_full!`, `observe_biase
 
 ## Performance
 
+### Caching & Thread Safety
+- `legal_actions(g)` results are cached in the game object until state changes
+- Cache is automatically invalidated by `apply_action!`, `apply_chance!`, `step!`, `reset!`
+- **Not thread-safe**: Don't call `legal_actions` or `is_action_valid` concurrently on the same game object
+- For MCTS: Use `clone(g)` to create independent game copies
+
+### Benchmarks
 Benchmarked on Apple M1 MacBook (single core) without sanity checks:
 
 | Metric | Value |

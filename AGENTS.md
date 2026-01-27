@@ -2,6 +2,48 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## Release Notes - v0.3.0
+
+### Breaking Changes
+- **Removed deprecated API**: `observe_fast()`, `observe_fast!()`, `OBS_SIZE_FAST`, `OBS_SIZE_FULL` are removed
+  - Use `observe_minimal()` / `observe_minimal!()` instead
+  - Use `OBS_CHANNELS_MINIMAL` / `OBS_CHANNELS_FULL` for size constants
+- **PyCall moved to [extras]**: Core module no longer requires Python installation
+  - PyCall is only loaded during tests (for gnubg validation)
+  - Users who don't need gnubg integration get a lighter install
+
+### New Features
+- **`clone(g)`**: Safe deep copy of game state with fresh buffers (recommended for MCTS)
+- **`legal_actions` caching**: Results cached until state changes (~2x faster for repeated calls)
+- **Accurate move count for non-doubles**: Observation now correctly encodes 0/1/2 playable dice
+
+### Performance Improvements
+- `is_action_valid()` now uses internal buffers (zero allocations)
+- `legal_actions()` cached in game object, invalidated on state changes
+
+### AlphaZero.jl Compatibility
+- Backwards-compatible constructor preserves existing AlphaZero integration
+- Recommend migrating `GI.current_state` to use `clone(g)` instead of direct construction
+
+### Migration Guide
+
+```julia
+# Old (deprecated)
+obs = observe_fast(g)           # → observe_minimal(g)
+observe_fast!(buf, g)           # → observe_minimal!(reshape(buf, 30, 1, 26), g)
+size = OBS_SIZE_FAST            # → OBS_CHANNELS_MINIMAL
+
+# New - copying game state
+# Old (fragile - depends on field layout)
+copy = BackgammonGame(g.p0, g.p1, g.dice, ...)
+# New (recommended)
+copy = clone(g)
+```
+
+---
+
 ## Build & Test Commands
 
 ```bash
