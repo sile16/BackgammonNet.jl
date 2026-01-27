@@ -1355,6 +1355,68 @@ end
         end
     end
 
+    @testset "Edge Cases: dice_sum, contact, overflow" begin
+        # Test dice_sum on chance node (dice = [0,0])
+        g_chance = initial_state(first_player=0)
+        # Don't roll dice - game starts at chance node
+        @test is_chance_node(g_chance)
+        obs_chance = observe_full(g_chance)
+        @test obs_chance[39, 1, 1] == 0.0f0  # dice_sum should be 0 at chance node
+
+        # Test dice_sum minimum (1+1=2)
+        b = zeros(MVector{28, Int8})
+        b[1] = 2
+        g_min_dice = make_test_game(board=b, dice=(1, 1), remaining=2, current_player=0)
+        obs_min_dice = observe_full(g_min_dice)
+        @test obs_min_dice[39, 1, 1] ≈ 2.0f0/12.0f0 atol=1e-6
+
+        # Test dice_sum maximum (6+6=12)
+        g_max_dice = make_test_game(board=b, dice=(6, 6), remaining=2, current_player=0)
+        obs_max_dice = observe_full(g_max_dice)
+        @test obs_max_dice[39, 1, 1] ≈ 1.0f0 atol=1e-6  # 12/12 = 1.0
+
+        # Test contact on empty board (no checkers)
+        b_empty = zeros(MVector{28, Int8})
+        g_empty = make_test_game(board=b_empty, dice=(3, 4), current_player=0)
+        obs_empty = observe_full(g_empty)
+        @test obs_empty[40, 1, 1] == 0.0f0  # No contact on empty board
+
+        # Test contact when only one side has checkers
+        b_one_side = zeros(MVector{28, Int8})
+        b_one_side[10] = 5  # Only my checkers
+        g_one_side = make_test_game(board=b_one_side, dice=(3, 4), current_player=0)
+        obs_one_side = observe_full(g_one_side)
+        @test obs_one_side[40, 1, 1] == 0.0f0  # No contact (no opponent)
+
+        # Test 6+ overflow at exact boundary (count = 5)
+        b_boundary = zeros(MVector{28, Int8})
+        b_boundary[10] = 5  # Exactly 5 checkers
+        g_boundary = make_test_game(board=b_boundary, dice=(1, 2), current_player=0)
+        obs_boundary = observe_minimal(g_boundary)
+        @test obs_boundary[5, 1, 10] == 1.0f0  # >=5 is true
+        @test obs_boundary[6, 1, 10] == 0.0f0  # 6+ overflow = (5-5)/10 = 0
+
+        # Test 6+ overflow at count = 6
+        b_six = zeros(MVector{28, Int8})
+        b_six[10] = 6
+        g_six = make_test_game(board=b_six, dice=(1, 2), current_player=0)
+        obs_six = observe_minimal(g_six)
+        @test obs_six[6, 1, 10] ≈ (6-5)/10.0f0 atol=1e-6  # 0.1
+
+        # Test features bounded in [0, 1] range at chance node
+        @test all(obs_chance .>= 0.0f0)
+        @test all(obs_chance .<= 1.0f0)
+
+        # Test pip counts are 0 on empty board
+        @test obs_empty[41, 1, 1] == 0.0f0  # my_pips
+        @test obs_empty[42, 1, 1] == 0.0f0  # opp_pips
+        @test obs_empty[43, 1, 1] == 0.0f0  # pip_diff
+
+        # Test can_bear_off on empty board (vacuously true - no checkers outside home)
+        @test obs_empty[44, 1, 1] == 1.0f0  # can bear off (no checkers to block it)
+        @test obs_empty[45, 1, 1] == 1.0f0  # opp can bear off
+    end
+
     @testset "Scoring & Perspective" begin
         # P0 Win - Single
         b = zeros(MVector{28, Int8})
