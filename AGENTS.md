@@ -47,6 +47,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Tests for hybrid observations
 - Tests for `observe()`, `obs_dims()`, `set_obs_type!()`
 
+### gnubg Validation (2026-01-27)
+Full validation against gnubg reference implementation:
+
+| Test | Games | Positions | Mismatches |
+|------|-------|-----------|------------|
+| Final states (hybrid) | 500 | 44,303 | 0 |
+| Legal actions (direct) | 100 | 9,004 | 0 |
+
+All legal actions and final board states match gnubg exactly.
+
 ---
 
 ## Release Notes - v0.3.0
@@ -68,9 +78,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `is_action_valid()` now uses internal buffers (zero allocations)
 - `legal_actions()` cached in game object, invalidated on state changes
 
-### AlphaZero.jl Compatibility
-- Backwards-compatible constructor preserves existing AlphaZero integration
-- Recommend migrating `GI.current_state` to use `clone(g)` instead of direct construction
+### AlphaZero.jl Compatibility (v0.3.2)
+
+**Breaking change**: The `BackgammonGame` struct now has an `obs_type` field. Update your `GI.current_state` implementation:
+
+```julia
+# REQUIRED: Use clone() instead of direct construction
+function GI.current_state(g::BackgammonGame)
+    return clone(g)
+end
+```
 
 ### Migration Guide
 
@@ -85,6 +102,16 @@ size = OBS_SIZE_FAST            # → OBS_CHANNELS_MINIMAL
 copy = BackgammonGame(g.p0, g.p1, g.dice, ...)
 # New (recommended)
 copy = clone(g)
+
+# New - observation API (v0.3.2)
+g = initial_state(obs_type=:minimal_flat)  # 330-element vector
+obs = observe(g)                            # Dispatches based on obs_type
+dims = obs_dims(g)                          # Returns 330
+
+# Available obs_type values:
+# :minimal (30×1×26), :full (62×1×26), :biased (122×1×26)
+# :minimal_flat (330), :full_flat (362), :biased_flat (422)
+# :minimal_hybrid, :full_hybrid, :biased_hybrid (NamedTuple with board + globals)
 ```
 
 ---
