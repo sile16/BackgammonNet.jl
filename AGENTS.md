@@ -553,25 +553,34 @@ Logged metrics: `games`, `agent0_wins`, `agent1_wins`, `agent0_win_rate`, `agent
 
 ### Performance Benchmarks
 
-Tested on typical hardware:
+Tested on typical hardware (single-threaded Julia):
 
 | Operation | Ply 0 | Ply 1 | Ply 2 |
 |-----------|-------|-------|-------|
-| Raw evaluation | 85,706/sec | 72,480/sec | 35/sec |
-| Best move selection | 7,561/sec | 5,193/sec | ~0.3/sec |
-| Games (gnubg vs random) | 46/sec | 1.5/sec | very slow |
+| Raw evaluation | ~84,000/sec | ~72,000/sec | ~35/sec |
+| Best move selection | ~7,500/sec | ~5,200/sec | ~0.3/sec |
+| Games (gnubg vs random) | 29/sec | 22/sec | 0.04/sec |
 
 **Baselines:**
 | Operation | Speed |
 |-----------|-------|
-| Random vs Random (with equity logging) | 422 games/sec |
-| Pure Julia random games (no gnubg) | 3,547 games/sec |
+| Pure Julia (Random vs Random) | 54 games/sec |
+| Pure Julia random games (no PyCall) | ~3,500 games/sec |
+
+**Latest benchmark (2026-01-27):**
+```
+PyCall gnubg.probabilities(): ~84,000 evals/sec
+gnubg ply-0 vs Random: 29 games/sec
+gnubg ply-1 vs Random: 22 games/sec
+gnubg ply-2 vs Random: 0.04 games/sec (~25 sec/game)
+```
 
 **Key observations:**
-- Ply 0 and Ply 1 have similar raw eval speed (~72-86k/sec)
-- Ply 2 is ~2000x slower (gnubg does deep minimax search)
-- `play_game` calls `evaluate()` for equity logging on every move, adding overhead
-- Main bottleneck at ply 0: ~11 legal moves per position × evaluation cost
+- Ply 0 → Ply 1: ~25% slower (1-ply adds some overhead)
+- Ply 1 → Ply 2: ~550x slower (exponential minimax search)
+- Pure Julia is ~2x faster than ply-0 (no PyCall overhead)
+- For training, ply-0 recommended - ply-2 is far too slow
+- gnubg may use internal parallelism for ply-2, but Julia side is single-threaded
 
 ### PyCall Configuration
 
