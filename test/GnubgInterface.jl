@@ -256,8 +256,7 @@ function best_move(g::BackgammonGame; ply::Int=_default_ply[])
     best_equity = -Inf
 
     for action in actions
-        g2 = BackgammonGame(g.p0, g.p1, g.dice, g.remaining_actions,
-                            g.current_player, g.terminated, g.reward, Int[])
+        g2 = BackgammonNet.clone(g)
         BackgammonNet.apply_action!(g2, action)
 
         equity = evaluate(g2; ply=ply)

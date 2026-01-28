@@ -329,13 +329,10 @@ end
     copy_game(g::BackgammonGame) -> BackgammonGame
 
 Create a copy of the game state (without history for efficiency).
+Uses clone() which properly copies all fields including obs_type.
 """
 function copy_game(g::BackgammonGame)
-    BackgammonGame(
-        g.p0, g.p1, g.dice, g.remaining_actions,
-        g.current_player, g.terminated, g.reward,
-        Int[]
-    )
+    return BackgammonNet.clone(g)
 end
 
 """
