@@ -390,10 +390,11 @@ When used with AlphaZero.jl MCTS, the call sequence during simulation is:
 
 The Julia implementation has been validated against gnubg by comparing **final board states** after each turn. All unique final positions computed by Julia match exactly what gnubg computes.
 
-**Validated commit:** `a5e7db3` (2026-01-16)
+**Validated commit:** `c48ef94` (2026-01-27)
 
 **Latest validation run:**
-- Move validation: **500 games, 46,174 positions, 0 mismatches** (~78 pos/sec)
+- Final states (hybrid): **500 games, 44,303 positions, 0 mismatches** (~63 pos/sec, ~0.7 games/sec)
+- Legal actions (direct): **100 games, 9,004 positions, 0 mismatches**
 - Reward validation: **5,000 games, 0 mismatches** (~3,734 games/sec)
 
 ### Why Two gnubg Interfaces?
@@ -403,7 +404,7 @@ We have two separate interfaces for gnubg, each serving a different purpose:
 | Interface | Method | Speed | Used For |
 |-----------|--------|-------|----------|
 | `GnubgInterface.jl` | PyCall | ~85k evals/sec | Position evaluation, playing games |
-| `gnubg_bridge.jl` | CLI | ~78 pos/sec | Validation (enumerating ALL legal moves) |
+| `gnubg_bridge.jl` | CLI | ~63 pos/sec | Validation (enumerating ALL legal moves) |
 
 **Why not just use PyCall for everything?**
 
@@ -419,12 +420,12 @@ We have two separate interfaces for gnubg, each serving a different purpose:
 
 | Script | Speed | Description |
 |--------|-------|-------------|
-| `test/gnubg_hybrid.jl` | ~0.8 games/sec | Parallel CLI validation (compares final board states) |
+| `test/gnubg_hybrid.jl` | ~63 pos/sec, ~0.7 games/sec | Parallel CLI validation (compares final board states) |
 | `test/validate_rewards.jl` | ~3,700 games/sec | Fast Julia-only reward validation |
 
 ```bash
-# Run move validation
-julia --project -t 4 test/gnubg_hybrid.jl 500
+# Run move validation (uses gnubg CLI, 4 threads)
+julia --project -t4 test/gnubg_hybrid.jl 500
 
 # Run reward validation (fast, Julia-only)
 julia --project test/validate_rewards.jl 5000
