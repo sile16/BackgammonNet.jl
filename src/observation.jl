@@ -3,9 +3,9 @@
 # ============================================================================
 #
 # Provides three observation types that build on each other:
-#   - Minimal (30 channels): Raw board + dice + move count + off counts
-#   - Full (62 channels): + arithmetic features (no strategic bias)
-#   - Biased (122 channels): + hand-crafted strategic features
+#   - Minimal (42 channels): Raw board + dice + move count + off counts + cube/match state
+#   - Full (74 channels): + arithmetic features (no strategic bias)
+#   - Biased (134 channels): + hand-crafted strategic features
 #
 # Shape: (C, 1, 26) where width = 2 bars + 24 board points
 #
@@ -25,24 +25,24 @@
 const OBS_WIDTH = 26  # My bar at 1, points 1-24 at 2-25, opponent bar at 26
 
 # Channel counts for each tier (3D observations)
-const OBS_CHANNELS_MINIMAL = 30   # 12 board + 12 dice (2 slots) + 4 move count + 2 off
-const OBS_CHANNELS_FULL = 62      # 30 minimal + 32 full features (31-62)
-const OBS_CHANNELS_BIASED = 122   # 62 full + 60 biased features (63-122)
+const OBS_CHANNELS_MINIMAL = 42   # 12 board + 12 dice + 4 move count + 2 off + 12 cube/match
+const OBS_CHANNELS_FULL = 74      # 42 minimal + 32 full features (43-74)
+const OBS_CHANNELS_BIASED = 134   # 74 full + 60 biased features (75-134)
 
 # Flat observation sizes (same features, globals appear once instead of broadcast)
-# Minimal: 312 board (2×26×6) + 12 dice (2×6) + 4 move count + 2 off = 330
-const OBS_FLAT_MINIMAL = 330
-# Full adds: 8 scalars + 24 thresholds (4×6) = 32 → 330 + 32 = 362
-const OBS_FLAT_FULL = 362
-# Biased adds: 60 thresholds (10×6) = 60 → 362 + 60 = 422
-const OBS_FLAT_BIASED = 422
+# Minimal: 312 board (2×26×6) + 12 dice + 4 move count + 2 off + 12 cube/match = 342
+const OBS_FLAT_MINIMAL = 342
+# Full adds: 8 scalars + 24 thresholds (4×6) = 32 → 342 + 32 = 374
+const OBS_FLAT_FULL = 374
+# Biased adds: 60 thresholds (10×6) = 60 → 374 + 60 = 434
+const OBS_FLAT_BIASED = 434
 
 # Hybrid observation sizes: board (12×26) + globals (flat)
 # Board is spatial for conv1d, globals concatenated after conv
 const OBS_HYBRID_BOARD = (12, 26)  # (channels, width)
-const OBS_HYBRID_GLOBALS_MINIMAL = 18   # 12 dice + 4 move count + 2 off
-const OBS_HYBRID_GLOBALS_FULL = 50      # 18 + 32 full features
-const OBS_HYBRID_GLOBALS_BIASED = 110   # 50 + 60 biased features
+const OBS_HYBRID_GLOBALS_MINIMAL = 30   # 12 dice + 4 move count + 2 off + 12 cube/match
+const OBS_HYBRID_GLOBALS_FULL = 62      # 30 + 32 full features
+const OBS_HYBRID_GLOBALS_BIASED = 122   # 62 + 60 biased features
 
 # --- Normalization Constants ---
 const OFF_NORM = 15.0f0           # Max checkers per player
@@ -50,6 +50,8 @@ const PIP_NORM = 167.0f0          # Starting pip count (natural scale)
 const DICE_SUM_NORM = 12.0f0      # Max dice sum (6+6)
 const DICE_DELTA_NORM = 5.0f0     # Max dice delta |6-1|
 const OVERFLOW_NORM = 10.0f0      # For 6+ threshold encoding: (n-5)/10
+const MATCH_NORM = 25.0f0         # Max practical match length
+const CUBE_NORM = 6.0f0           # log2(max_cube=64) = 6
 
 # --- Board Layout Constants ---
 const MY_HOME_START = 19          # My home board: points 19-24 (canonical)
@@ -60,7 +62,7 @@ const BAR_PIP_VALUE = 25          # Pip value for checkers on bar
 # Channel Layout Documentation (1-indexed)
 # ============================================================================
 #
-# MINIMAL (30 channels, 1-30):
+# MINIMAL (42 channels, 1-42):
 #   1-6:   My checker thresholds (>=1, >=2, >=3, >=4, >=5, 6+)
 #   7-12:  Opponent checker thresholds
 #   13-18: Dice slot 0 one-hot (high die, values 1-6)
@@ -68,6 +70,18 @@ const BAR_PIP_VALUE = 25          # Pip value for checkers on bar
 #   25-28: Move count one-hot (bins 1, 2, 3, 4 moves)
 #   29:    My off count (/15)
 #   30:    Opponent off count (/15)
+#   31:    Phase: CUBE_DECISION (1.0 if active)
+#   32:    Phase: CUBE_RESPONSE (1.0 if active)
+#   33:    Phase: CHECKER_PLAY (1.0 if active)
+#   34:    Cube value: log2(cube_value) / 6.0
+#   35:    I own cube (cube_owner == +1)
+#   36:    Cube centered (cube_owner == 0)
+#   37:    Can double (may_double)
+#   38:    Money play (1.0 if no match)
+#   39:    My away score (/25)
+#   40:    Opponent away score (/25)
+#   41:    Crawford game flag
+#   42:    Post-Crawford flag
 #
 # Move Count Encoding Design Philosophy:
 #   - 4-bin one-hot encoding for number of moves this turn (1, 2, 3, or 4)
@@ -77,31 +91,31 @@ const BAR_PIP_VALUE = 25          # Pip value for checkers on bar
 #   - Chance node (no dice): All bins zero
 #   - Completely blocked (0 moves): All bins zero
 #
-# FULL adds 32 channels (31-62):
-#   31:    dice_sum (/12)
-#   32:    dice_delta |d1-d2| (/5)
-#   33:    Contact indicator (1=contact, 0=race)
-#   34:    My pip count (/167)
-#   35:    Opponent pip count (/167)
-#   36:    Pip difference (my-opp, /167, clipped [-1,1])
-#   37:    Can bear off (me)
-#   38:    Can bear off (opponent)
-#   39-44: My stragglers (outside home) threshold
-#   45-50: Opponent stragglers threshold
-#   51-56: My remaining (15-off) threshold
-#   57-62: Opponent remaining threshold
+# FULL adds 32 channels (43-74):
+#   43:    dice_sum (/12)
+#   44:    dice_delta |d1-d2| (/5)
+#   45:    Contact indicator (1=contact, 0=race)
+#   46:    My pip count (/167)
+#   47:    Opponent pip count (/167)
+#   48:    Pip difference (my-opp, /167, clipped [-1,1])
+#   49:    Can bear off (me)
+#   50:    Can bear off (opponent)
+#   51-56: My stragglers (outside home) threshold
+#   57-62: Opponent stragglers threshold
+#   63-68: My remaining (15-off) threshold
+#   69-74: Opponent remaining threshold
 #
-# BIASED adds 60 channels (63-122):
-#   63-68:   My prime length threshold
-#   69-74:   Opponent prime length threshold
-#   75-80:   My home board blocks threshold
-#   81-86:   Opponent home board blocks threshold
-#   87-92:   My anchors (in opponent's home) threshold
-#   93-98:   Opponent anchors threshold
-#   99-104:  My blot count threshold
-#   105-110: Opponent blot count threshold
-#   111-116: My builder count threshold
-#   117-122: Opponent builder count threshold
+# BIASED adds 60 channels (75-134):
+#   75-80:   My prime length threshold
+#   81-86:   Opponent prime length threshold
+#   87-92:   My home board blocks threshold
+#   93-98:   Opponent home board blocks threshold
+#   99-104:  My anchors (in opponent's home) threshold
+#   105-110: Opponent anchors threshold
+#   111-116: My blot count threshold
+#   117-122: Opponent blot count threshold
+#   123-128: My builder count threshold
+#   129-134: Opponent builder count threshold
 #
 # ============================================================================
 
@@ -474,6 +488,64 @@ function _encode_off!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
     return nothing
 end
 
+"""
+    _encode_cube_match!(obs, g)
+
+Encode cube/match state (channels 31-42). Broadcast across all spatial positions.
+"""
+function _encode_cube_match!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
+    # Phase one-hot (channels 31-33)
+    phase_ch = g.phase == PHASE_CUBE_DECISION ? 31 :
+               g.phase == PHASE_CUBE_RESPONSE ? 32 :
+               g.phase == PHASE_CHECKER_PLAY  ? 33 : 0
+    if phase_ch > 0
+        @inbounds for w in 1:OBS_WIDTH
+            obs[phase_ch, 1, w] = 1.0f0
+        end
+    end
+
+    # Cube value (channel 34): log2(cube_value) / 6
+    cube_val = log2(Float32(g.cube_value)) / CUBE_NORM
+    @inbounds for w in 1:OBS_WIDTH
+        obs[34, 1, w] = cube_val
+    end
+
+    # Cube ownership (channels 35-36)
+    if g.cube_owner == Int8(1)
+        @inbounds for w in 1:OBS_WIDTH; obs[35, 1, w] = 1.0f0; end
+    elseif g.cube_owner == Int8(0)
+        @inbounds for w in 1:OBS_WIDTH; obs[36, 1, w] = 1.0f0; end
+    end
+
+    # Can double (channel 37)
+    if may_double(g)
+        @inbounds for w in 1:OBS_WIDTH; obs[37, 1, w] = 1.0f0; end
+    end
+
+    # Money play (channel 38)
+    if g.my_away == Int8(0) && g.opp_away == Int8(0)
+        @inbounds for w in 1:OBS_WIDTH; obs[38, 1, w] = 1.0f0; end
+    end
+
+    # Away scores (channels 39-40)
+    my_away_norm = Float32(g.my_away) / MATCH_NORM
+    opp_away_norm = Float32(g.opp_away) / MATCH_NORM
+    @inbounds for w in 1:OBS_WIDTH
+        obs[39, 1, w] = my_away_norm
+        obs[40, 1, w] = opp_away_norm
+    end
+
+    # Crawford / Post-Crawford (channels 41-42)
+    if g.is_crawford
+        @inbounds for w in 1:OBS_WIDTH; obs[41, 1, w] = 1.0f0; end
+    end
+    if g.is_post_crawford
+        @inbounds for w in 1:OBS_WIDTH; obs[42, 1, w] = 1.0f0; end
+    end
+
+    return nothing
+end
+
 # --- Full Observation Helpers ---
 
 """
@@ -613,21 +685,21 @@ function _encode_full_features!(obs::AbstractArray{Float32,3}, g::BackgammonGame
 
     pip_diff = clamp((feat.my_pips - feat.opp_pips) / PIP_NORM, -1.0f0, 1.0f0)
 
-    # Scalar features (broadcast)
-    _broadcast_scalar!(obs, 31, Float32(dice_sum) / DICE_SUM_NORM)
-    _broadcast_scalar!(obs, 32, Float32(dice_delta) / DICE_DELTA_NORM)
-    _broadcast_scalar!(obs, 33, Float32(feat.has_contact))
-    _broadcast_scalar!(obs, 34, Float32(feat.my_pips) / PIP_NORM)
-    _broadcast_scalar!(obs, 35, Float32(feat.opp_pips) / PIP_NORM)
-    _broadcast_scalar!(obs, 36, pip_diff)
-    _broadcast_scalar!(obs, 37, Float32(feat.can_bear_my))
-    _broadcast_scalar!(obs, 38, Float32(feat.can_bear_opp))
+    # Scalar features (broadcast) — channels 43-50
+    _broadcast_scalar!(obs, 43, Float32(dice_sum) / DICE_SUM_NORM)
+    _broadcast_scalar!(obs, 44, Float32(dice_delta) / DICE_DELTA_NORM)
+    _broadcast_scalar!(obs, 45, Float32(feat.has_contact))
+    _broadcast_scalar!(obs, 46, Float32(feat.my_pips) / PIP_NORM)
+    _broadcast_scalar!(obs, 47, Float32(feat.opp_pips) / PIP_NORM)
+    _broadcast_scalar!(obs, 48, pip_diff)
+    _broadcast_scalar!(obs, 49, Float32(feat.can_bear_my))
+    _broadcast_scalar!(obs, 50, Float32(feat.can_bear_opp))
 
-    # Threshold-encoded counts
-    _encode_threshold_broadcast!(obs, 38, feat.my_stragglers)      # 39-44
-    _encode_threshold_broadcast!(obs, 44, feat.opp_stragglers)     # 45-50
-    _encode_threshold_broadcast!(obs, 50, 15 - feat.my_off)        # 51-56: remaining
-    _encode_threshold_broadcast!(obs, 56, 15 - feat.opp_off)       # 57-62: remaining
+    # Threshold-encoded counts — channels 51-74
+    _encode_threshold_broadcast!(obs, 50, feat.my_stragglers)      # 51-56
+    _encode_threshold_broadcast!(obs, 56, feat.opp_stragglers)     # 57-62
+    _encode_threshold_broadcast!(obs, 62, 15 - feat.my_off)        # 63-68: remaining
+    _encode_threshold_broadcast!(obs, 68, 15 - feat.opp_off)       # 69-74: remaining
 
     return nothing
 end
@@ -727,25 +799,25 @@ Builds on full observation.
 function _encode_biased_features!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
     strat = _compute_strategic_features(g)
 
-    # Prime length (max 6, no overflow needed)
-    _encode_threshold_capped!(obs, 62, strat.my_prime, 6)       # 63-68
-    _encode_threshold_capped!(obs, 68, strat.opp_prime, 6)      # 69-74
+    # Prime length (max 6, no overflow needed) — channels 75-86
+    _encode_threshold_capped!(obs, 74, strat.my_prime, 6)       # 75-80
+    _encode_threshold_capped!(obs, 80, strat.opp_prime, 6)      # 81-86
 
-    # Home board blocks (max 6)
-    _encode_threshold_capped!(obs, 74, strat.my_home_blocks, 6)  # 75-80
-    _encode_threshold_capped!(obs, 80, strat.opp_home_blocks, 6) # 81-86
+    # Home board blocks (max 6) — channels 87-98
+    _encode_threshold_capped!(obs, 86, strat.my_home_blocks, 6)  # 87-92
+    _encode_threshold_capped!(obs, 92, strat.opp_home_blocks, 6) # 93-98
 
-    # Anchors (max 6)
-    _encode_threshold_capped!(obs, 86, strat.my_anchors, 6)      # 87-92
-    _encode_threshold_capped!(obs, 92, strat.opp_anchors, 6)     # 93-98
+    # Anchors (max 6) — channels 99-110
+    _encode_threshold_capped!(obs, 98, strat.my_anchors, 6)      # 99-104
+    _encode_threshold_capped!(obs, 104, strat.opp_anchors, 6)    # 105-110
 
-    # Blot count (can exceed 6, use overflow)
-    _encode_threshold_broadcast!(obs, 98, strat.my_blots)        # 99-104
-    _encode_threshold_broadcast!(obs, 104, strat.opp_blots)      # 105-110
+    # Blot count (can exceed 6, use overflow) — channels 111-122
+    _encode_threshold_broadcast!(obs, 110, strat.my_blots)       # 111-116
+    _encode_threshold_broadcast!(obs, 116, strat.opp_blots)      # 117-122
 
-    # Builder count (can exceed 6, use overflow)
-    _encode_threshold_broadcast!(obs, 110, strat.my_builders)    # 111-116
-    _encode_threshold_broadcast!(obs, 116, strat.opp_builders)   # 117-122
+    # Builder count (can exceed 6, use overflow) — channels 123-134
+    _encode_threshold_broadcast!(obs, 122, strat.my_builders)    # 123-128
+    _encode_threshold_broadcast!(obs, 128, strat.opp_builders)   # 129-134
 
     return nothing
 end
@@ -801,6 +873,7 @@ function observe_minimal!(obs::AbstractArray{Float32,3}, g::BackgammonGame;
     _encode_board!(obs, g)
     _encode_dice!(obs, g, actions)
     _encode_off!(obs, g)
+    _encode_cube_match!(obs, g)
 
     return obs
 end
@@ -808,19 +881,19 @@ end
 """
     observe_full(g::BackgammonGame; actions=nothing) -> Array{Float32,3}
 
-Generate full observation (62 channels). Shape: (62, 1, 26).
+Generate full observation (74 channels). Shape: (74, 1, 26).
 
 Includes all minimal features plus pre-computed arithmetic features.
 No strategic bias - only saves the network from doing math.
 
-# Additional Channels (beyond minimal, 31-62)
-- 31: dice_sum (/12)
-- 32: dice_delta |d1-d2| (/5)
-- 33: Contact indicator (1=contact, 0=race)
-- 34-36: Pip counts (my, opp, diff)
-- 37-38: Can bear off flags
-- 39-50: Stragglers (outside home) threshold encoded
-- 51-62: Remaining checkers threshold encoded
+# Additional Channels (beyond minimal, 43-74)
+- 43: dice_sum (/12)
+- 44: dice_delta |d1-d2| (/5)
+- 45: Contact indicator (1=contact, 0=race)
+- 46-48: Pip counts (my, opp, diff)
+- 49-50: Can bear off flags
+- 51-62: Stragglers (outside home) threshold encoded
+- 63-74: Remaining checkers threshold encoded
 
 See also: [`observe_minimal`](@ref), [`observe_biased`](@ref)
 """
@@ -846,6 +919,7 @@ function observe_full!(obs::AbstractArray{Float32,3}, g::BackgammonGame;
     _encode_board!(obs, g)
     _encode_dice!(obs, g, actions)
     _encode_off!(obs, g)
+    _encode_cube_match!(obs, g)
 
     # Full features
     _encode_full_features!(obs, g)
@@ -892,6 +966,7 @@ function observe_biased!(obs::AbstractArray{Float32,3}, g::BackgammonGame;
     _encode_board!(obs, g)
     _encode_dice!(obs, g, actions)
     _encode_off!(obs, g)
+    _encode_cube_match!(obs, g)
 
     # Full features
     _encode_full_features!(obs, g)
@@ -1048,6 +1123,30 @@ function _encode_off_flat!(obs::AbstractVector{Float32}, g::BackgammonGame, offs
 end
 
 """
+    _encode_cube_match_flat!(obs, g, offset) -> Int
+
+Encode cube/match state as 12 flat values at offset.
+Returns new offset after encoding.
+"""
+function _encode_cube_match_flat!(obs::AbstractVector{Float32}, g::BackgammonGame, offset::Int)
+    @inbounds begin
+        obs[offset + 1]  = g.phase == PHASE_CUBE_DECISION ? 1.0f0 : 0.0f0
+        obs[offset + 2]  = g.phase == PHASE_CUBE_RESPONSE ? 1.0f0 : 0.0f0
+        obs[offset + 3]  = g.phase == PHASE_CHECKER_PLAY  ? 1.0f0 : 0.0f0
+        obs[offset + 4]  = log2(Float32(g.cube_value)) / CUBE_NORM
+        obs[offset + 5]  = Float32(g.cube_owner == Int8(1))
+        obs[offset + 6]  = Float32(g.cube_owner == Int8(0))
+        obs[offset + 7]  = may_double(g) ? 1.0f0 : 0.0f0
+        obs[offset + 8]  = (g.my_away == Int8(0) && g.opp_away == Int8(0)) ? 1.0f0 : 0.0f0
+        obs[offset + 9]  = Float32(g.my_away) / MATCH_NORM
+        obs[offset + 10] = Float32(g.opp_away) / MATCH_NORM
+        obs[offset + 11] = g.is_crawford ? 1.0f0 : 0.0f0
+        obs[offset + 12] = g.is_post_crawford ? 1.0f0 : 0.0f0
+    end
+    return offset + 12
+end
+
+"""
     _encode_threshold_flat!(obs, offset, count) -> Int
 
 Encode count using 6-threshold scheme at offset.
@@ -1136,7 +1235,7 @@ end
 """
     observe_minimal_flat(g::BackgammonGame; actions=nothing) -> Vector{Float32}
 
-Generate minimal flat observation (330 values).
+Generate minimal flat observation (342 values).
 
 Same features as `observe_minimal` but without spatial broadcasting.
 Global features (dice, move count, off counts) appear once instead of 26 times.
@@ -1166,18 +1265,19 @@ function observe_minimal_flat!(obs::AbstractVector{Float32}, g::BackgammonGame;
     idx = _encode_board_flat!(obs, g, 0)
     idx = _encode_dice_flat!(obs, g, idx, actions)
     idx = _encode_off_flat!(obs, g, idx)
+    idx = _encode_cube_match_flat!(obs, g, idx)
     return obs
 end
 
 """
     observe_full_flat(g::BackgammonGame; actions=nothing) -> Vector{Float32}
 
-Generate full flat observation (362 values).
+Generate full flat observation (374 values).
 
 Same features as `observe_full` but without spatial broadcasting.
 
 # Layout (362 total)
-- Minimal: 330 values
+- Minimal: 342 values
 - Full additions: 32 values (8 scalars + 4×6 thresholds)
 
 See also: [`observe_full`](@ref), [`observe_minimal_flat`](@ref)
@@ -1206,12 +1306,12 @@ end
 """
     observe_biased_flat(g::BackgammonGame; actions=nothing) -> Vector{Float32}
 
-Generate biased flat observation (422 values).
+Generate biased flat observation (434 values).
 
 Same features as `observe_biased` but without spatial broadcasting.
 
 # Layout (422 total)
-- Full: 362 values
+- Full: 374 values
 - Biased additions: 60 values (10×6 thresholds)
 
 See also: [`observe_biased`](@ref), [`observe_full_flat`](@ref)
@@ -1345,8 +1445,32 @@ function _encode_globals_minimal!(globals::AbstractVector{Float32}, g::Backgammo
         globals[idx + 1] = Float32(my_off) / OFF_NORM
         globals[idx + 2] = Float32(opp_off) / OFF_NORM
     end
+    idx += 2
 
-    return idx + 2
+    # Cube/match state (12 values)
+    @inbounds begin
+        # Phase one-hot (3 values)
+        globals[idx + 1] = g.phase == PHASE_CUBE_DECISION ? 1.0f0 : 0.0f0
+        globals[idx + 2] = g.phase == PHASE_CUBE_RESPONSE ? 1.0f0 : 0.0f0
+        globals[idx + 3] = g.phase == PHASE_CHECKER_PLAY  ? 1.0f0 : 0.0f0
+        # Cube value
+        globals[idx + 4] = log2(Float32(g.cube_value)) / CUBE_NORM
+        # Cube ownership
+        globals[idx + 5] = Float32(g.cube_owner == Int8(1))
+        globals[idx + 6] = Float32(g.cube_owner == Int8(0))
+        # Can double
+        globals[idx + 7] = may_double(g) ? 1.0f0 : 0.0f0
+        # Money play
+        globals[idx + 8] = (g.my_away == Int8(0) && g.opp_away == Int8(0)) ? 1.0f0 : 0.0f0
+        # Away scores
+        globals[idx + 9]  = Float32(g.my_away) / MATCH_NORM
+        globals[idx + 10] = Float32(g.opp_away) / MATCH_NORM
+        # Crawford / Post-Crawford
+        globals[idx + 11] = g.is_crawford ? 1.0f0 : 0.0f0
+        globals[idx + 12] = g.is_post_crawford ? 1.0f0 : 0.0f0
+    end
+
+    return idx + 12
 end
 
 """
@@ -1356,7 +1480,7 @@ Generate minimal hybrid observation.
 
 Returns NamedTuple with:
 - `board`: 12×26 Float32 matrix (spatial, for conv1d)
-- `globals`: 18-element Float32 vector (dice + move count + off)
+- `globals`: 30-element Float32 vector (dice + move count + off + cube/match)
 
 # Example
 ```julia
@@ -1395,7 +1519,7 @@ Generate full hybrid observation.
 
 Returns NamedTuple with:
 - `board`: 12×26 Float32 matrix (spatial)
-- `globals`: 50-element Float32 vector (18 minimal + 32 full features)
+- `globals`: 62-element Float32 vector (30 minimal + 32 full features)
 
 See also: [`observe_minimal_hybrid`](@ref), [`observe_biased_hybrid`](@ref)
 """
@@ -1427,7 +1551,7 @@ Generate biased hybrid observation.
 
 Returns NamedTuple with:
 - `board`: 12×26 Float32 matrix (spatial)
-- `globals`: 110-element Float32 vector (50 full + 60 biased features)
+- `globals`: 122-element Float32 vector (62 full + 60 biased features)
 
 See also: [`observe_minimal_hybrid`](@ref), [`observe_full_hybrid`](@ref)
 """
@@ -1581,7 +1705,7 @@ Valid types: `:minimal`, `:full`, `:biased`, `:minimal_flat`, `:full_flat`, `:bi
 ```julia
 g = initial_state()
 set_obs_type!(g, :full_flat)
-obs = observe(g)  # Now returns 362-element vector
+obs = observe(g)  # Now returns 374-element vector
 ```
 """
 function set_obs_type!(g::BackgammonGame, obs_type::Symbol)

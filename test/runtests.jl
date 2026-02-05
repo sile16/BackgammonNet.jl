@@ -1100,15 +1100,15 @@ end
 
     @testset "Observation Dimensions" begin
         # Test exported constants
-        # New encoding: 12 board + 12 dice (2 slots) + 4 move count + 2 off = 30 minimal
-        @test OBS_CHANNELS_MINIMAL == 30
-        @test OBS_CHANNELS_FULL == 62     # 30 + 32 full features
-        @test OBS_CHANNELS_BIASED == 122  # 62 + 60 biased features
+        # New encoding: 12 board + 12 dice (2 slots) + 4 move count + 2 off + 12 cube/match = 42 minimal
+        @test OBS_CHANNELS_MINIMAL == 42
+        @test OBS_CHANNELS_FULL == 74     # 42 + 32 full features
+        @test OBS_CHANNELS_BIASED == 134  # 74 + 60 biased features
         @test OBS_WIDTH == 26  # My bar at 1, points at 2-25, opponent bar at 26
 
-        @test OBSERVATION_SIZES.minimal == 30
-        @test OBSERVATION_SIZES.full == 62
-        @test OBSERVATION_SIZES.biased == 122
+        @test OBSERVATION_SIZES.minimal == 42
+        @test OBSERVATION_SIZES.full == 74
+        @test OBSERVATION_SIZES.biased == 134
         @test OBSERVATION_SIZES.width == 26
 
         # Test observation shapes
@@ -1116,15 +1116,15 @@ end
         sample_chance!(g)
 
         obs_min = observe_minimal(g)
-        @test size(obs_min) == (30, 1, 26)
+        @test size(obs_min) == (42, 1, 26)
         @test eltype(obs_min) == Float32
 
         obs_full = observe_full(g)
-        @test size(obs_full) == (62, 1, 26)
+        @test size(obs_full) == (74, 1, 26)
         @test eltype(obs_full) == Float32
 
         obs_biased = observe_biased(g)
-        @test size(obs_biased) == (122, 1, 26)
+        @test size(obs_biased) == (134, 1, 26)
         @test eltype(obs_biased) == Float32
     end
 
@@ -1489,31 +1489,31 @@ end
     end
 
     @testset "Full Observation Features" begin
-        # Test dice_sum (channel 31)
+        # Test dice_sum (channel 43)
         b = zeros(MVector{28, Int8})
         b[1] = 2
         g_sum = make_test_game(board=b, dice=(4, 3), current_player=0)
         obs_sum = observe_full(g_sum)
-        @test obs_sum[31, 1, 1] ≈ 7.0f0/12.0f0 atol=1e-6  # (4+3)/12
+        @test obs_sum[43, 1, 1] ≈ 7.0f0/12.0f0 atol=1e-6  # (4+3)/12
 
-        # Test dice_delta (channel 32)
+        # Test dice_delta (channel 44)
         g_delta = make_test_game(board=b, dice=(6, 2), current_player=0)
         obs_delta = observe_full(g_delta)
-        @test obs_delta[32, 1, 1] ≈ 4.0f0/5.0f0 atol=1e-6  # |6-2|/5 = 0.8
+        @test obs_delta[44, 1, 1] ≈ 4.0f0/5.0f0 atol=1e-6  # |6-2|/5 = 0.8
 
         # Test dice_delta for doubles (should be 0)
         g_doubles = make_test_game(board=b, dice=(3, 3), remaining=2, current_player=0)
         obs_doubles = observe_full(g_doubles)
-        @test obs_doubles[32, 1, 1] == 0.0f0  # |3-3|/5 = 0
+        @test obs_doubles[44, 1, 1] == 0.0f0  # |3-3|/5 = 0
 
-        # Test contact indicator (channel 33)
+        # Test contact indicator (channel 45)
         # Race position: no contact
         b_race = zeros(MVector{28, Int8})
         b_race[20] = 5  # My checkers in home (point 20)
         b_race[5] = -5  # Opp checkers far behind (point 5)
         g_race = make_test_game(board=b_race, dice=(1, 2), current_player=0)
         obs_race = observe_full(g_race)
-        @test obs_race[33, 1, 1] == 0.0f0  # No contact (is race)
+        @test obs_race[45, 1, 1] == 0.0f0  # No contact (is race)
 
         # Contact position
         b_contact = zeros(MVector{28, Int8})
@@ -1521,26 +1521,26 @@ end
         b_contact[15] = -1  # Opp checker ahead of me
         g_contact = make_test_game(board=b_contact, dice=(1, 2), current_player=0)
         obs_contact = observe_full(g_contact)
-        @test obs_contact[33, 1, 1] == 1.0f0  # Has contact
+        @test obs_contact[45, 1, 1] == 1.0f0  # Has contact
 
-        # Test pip counts (channels 34-36)
+        # Test pip counts (channels 46-48)
         b_pip = zeros(MVector{28, Int8})
         b_pip[1] = 2   # My 2 checkers at point 1: pip value = 2 * (25-1) = 48
         b_pip[24] = -3 # Opp 3 checkers at point 24: pip value = 3 * 24 = 72
         g_pip = make_test_game(board=b_pip, dice=(1, 2), current_player=0)
         obs_pip = observe_full(g_pip)
-        @test obs_pip[34, 1, 1] ≈ 48.0f0/167.0f0 atol=1e-5  # My pips
-        @test obs_pip[35, 1, 1] ≈ 72.0f0/167.0f0 atol=1e-5  # Opp pips
-        @test obs_pip[36, 1, 1] ≈ (48.0f0-72.0f0)/167.0f0 atol=1e-5  # Pip diff
+        @test obs_pip[46, 1, 1] ≈ 48.0f0/167.0f0 atol=1e-5  # My pips
+        @test obs_pip[47, 1, 1] ≈ 72.0f0/167.0f0 atol=1e-5  # Opp pips
+        @test obs_pip[48, 1, 1] ≈ (48.0f0-72.0f0)/167.0f0 atol=1e-5  # Pip diff
 
-        # Test can bear off (channels 37-38)
+        # Test can bear off (channels 49-50)
         b_bearoff = zeros(MVector{28, Int8})
         b_bearoff[20] = 5  # My checkers in home (19-24)
         b_bearoff[2] = -5  # Opp checkers in their home (1-6)
         g_bearoff = make_test_game(board=b_bearoff, dice=(1, 2), current_player=0)
         obs_bearoff = observe_full(g_bearoff)
-        @test obs_bearoff[37, 1, 1] == 1.0f0  # I can bear off
-        @test obs_bearoff[38, 1, 1] == 1.0f0  # Opp can bear off
+        @test obs_bearoff[49, 1, 1] == 1.0f0  # I can bear off
+        @test obs_bearoff[50, 1, 1] == 1.0f0  # Opp can bear off
 
         # Cannot bear off: checker outside home
         b_no_bear = zeros(MVector{28, Int8})
@@ -1548,34 +1548,34 @@ end
         b_no_bear[20] = 4
         g_no_bear = make_test_game(board=b_no_bear, dice=(1, 2), current_player=0)
         obs_no_bear = observe_full(g_no_bear)
-        @test obs_no_bear[37, 1, 1] == 0.0f0  # I cannot bear off
+        @test obs_no_bear[49, 1, 1] == 0.0f0  # I cannot bear off
 
-        # Test stragglers (channels 39-50)
+        # Test stragglers (channels 51-62)
         b_strag = zeros(MVector{28, Int8})
         b_strag[10] = 3  # 3 stragglers (outside home 19-24)
         b_strag[20] = 2  # 2 in home (not stragglers)
         g_strag = make_test_game(board=b_strag, dice=(1, 2), current_player=0)
         obs_strag = observe_full(g_strag)
-        # My stragglers = 3: channels 39-41 should be 1
-        @test obs_strag[39, 1, 1] == 1.0f0  # >=1
-        @test obs_strag[40, 1, 1] == 1.0f0  # >=2
-        @test obs_strag[41, 1, 1] == 1.0f0  # >=3
-        @test obs_strag[42, 1, 1] == 0.0f0  # >=4
+        # My stragglers = 3: channels 51-53 should be 1
+        @test obs_strag[51, 1, 1] == 1.0f0  # >=1
+        @test obs_strag[52, 1, 1] == 1.0f0  # >=2
+        @test obs_strag[53, 1, 1] == 1.0f0  # >=3
+        @test obs_strag[54, 1, 1] == 0.0f0  # >=4
 
-        # Test remaining (channels 51-62)
+        # Test remaining (channels 63-74)
         b_remain = zeros(MVector{28, Int8})
         b_remain[20] = 5
         b_remain[27] = 10  # 10 off, so 5 remaining
         g_remain = make_test_game(board=b_remain, dice=(1, 2), current_player=0)
         obs_remain = observe_full(g_remain)
-        # My remaining = 5: channels 51-55 should be 1
-        @test obs_remain[51, 1, 1] == 1.0f0  # >=1
-        @test obs_remain[55, 1, 1] == 1.0f0  # >=5
-        @test obs_remain[56, 1, 1] == 0.0f0  # 6+ (should be 0)
+        # My remaining = 5: channels 63-67 should be 1
+        @test obs_remain[63, 1, 1] == 1.0f0  # >=1
+        @test obs_remain[67, 1, 1] == 1.0f0  # >=5
+        @test obs_remain[68, 1, 1] == 0.0f0  # 6+ (should be 0)
     end
 
     @testset "Biased Observation Features" begin
-        # Test prime length (channels 63-74)
+        # Test prime length (channels 75-86)
         b_prime = zeros(MVector{28, Int8})
         b_prime[5] = 2   # Block
         b_prime[6] = 2   # Block
@@ -1584,14 +1584,14 @@ end
         g_prime = make_test_game(board=b_prime, dice=(1, 2), current_player=0)
         obs_prime = observe_biased(g_prime)
         # My prime = 3
-        @test obs_prime[63, 1, 1] == 1.0f0  # >=1
-        @test obs_prime[65, 1, 1] == 1.0f0  # >=3
-        @test obs_prime[66, 1, 1] == 0.0f0  # >=4
+        @test obs_prime[75, 1, 1] == 1.0f0  # >=1
+        @test obs_prime[77, 1, 1] == 1.0f0  # >=3
+        @test obs_prime[78, 1, 1] == 0.0f0  # >=4
         # Opp prime = 1
-        @test obs_prime[69, 1, 1] == 1.0f0  # >=1
-        @test obs_prime[70, 1, 1] == 0.0f0  # >=2
+        @test obs_prime[81, 1, 1] == 1.0f0  # >=1
+        @test obs_prime[82, 1, 1] == 0.0f0  # >=2
 
-        # Test home board blocks (channels 75-86)
+        # Test home board blocks (channels 87-98)
         b_home = zeros(MVector{28, Int8})
         b_home[20] = 2  # My block in home (19-24)
         b_home[21] = 2  # Another block in home
@@ -1599,27 +1599,27 @@ end
         g_home = make_test_game(board=b_home, dice=(1, 2), current_player=0)
         obs_home = observe_biased(g_home)
         # My home blocks = 2
-        @test obs_home[75, 1, 1] == 1.0f0  # >=1
-        @test obs_home[76, 1, 1] == 1.0f0  # >=2
-        @test obs_home[77, 1, 1] == 0.0f0  # >=3
+        @test obs_home[87, 1, 1] == 1.0f0  # >=1
+        @test obs_home[88, 1, 1] == 1.0f0  # >=2
+        @test obs_home[89, 1, 1] == 0.0f0  # >=3
         # Opp home blocks = 1
-        @test obs_home[81, 1, 1] == 1.0f0  # >=1
-        @test obs_home[82, 1, 1] == 0.0f0  # >=2
+        @test obs_home[93, 1, 1] == 1.0f0  # >=1
+        @test obs_home[94, 1, 1] == 0.0f0  # >=2
 
-        # Test anchors (channels 87-98)
+        # Test anchors (channels 99-110)
         b_anchor = zeros(MVector{28, Int8})
         b_anchor[3] = 2   # My anchor in opp's home (1-6)
         b_anchor[20] = -2 # Opp anchor in my home (19-24)
         g_anchor = make_test_game(board=b_anchor, dice=(1, 2), current_player=0)
         obs_anchor = observe_biased(g_anchor)
         # My anchors = 1
-        @test obs_anchor[87, 1, 1] == 1.0f0
-        @test obs_anchor[88, 1, 1] == 0.0f0
+        @test obs_anchor[99, 1, 1] == 1.0f0
+        @test obs_anchor[100, 1, 1] == 0.0f0
         # Opp anchors = 1
-        @test obs_anchor[93, 1, 1] == 1.0f0
-        @test obs_anchor[94, 1, 1] == 0.0f0
+        @test obs_anchor[105, 1, 1] == 1.0f0
+        @test obs_anchor[106, 1, 1] == 0.0f0
 
-        # Test blot count (channels 99-110)
+        # Test blot count (channels 111-122)
         b_blot = zeros(MVector{28, Int8})
         b_blot[5] = 1   # My blot
         b_blot[10] = 1  # Another blot
@@ -1627,14 +1627,14 @@ end
         g_blot = make_test_game(board=b_blot, dice=(1, 2), current_player=0)
         obs_blot = observe_biased(g_blot)
         # My blots = 2
-        @test obs_blot[99, 1, 1] == 1.0f0   # >=1
-        @test obs_blot[100, 1, 1] == 1.0f0  # >=2
-        @test obs_blot[101, 1, 1] == 0.0f0  # >=3
+        @test obs_blot[111, 1, 1] == 1.0f0   # >=1
+        @test obs_blot[112, 1, 1] == 1.0f0  # >=2
+        @test obs_blot[113, 1, 1] == 0.0f0  # >=3
         # Opp blots = 1
-        @test obs_blot[105, 1, 1] == 1.0f0
-        @test obs_blot[106, 1, 1] == 0.0f0
+        @test obs_blot[117, 1, 1] == 1.0f0
+        @test obs_blot[118, 1, 1] == 0.0f0
 
-        # Test builder count (channels 111-122)
+        # Test builder count (channels 123-134)
         b_builder = zeros(MVector{28, Int8})
         b_builder[5] = 2   # My builder
         b_builder[10] = 2  # Another builder
@@ -1643,12 +1643,12 @@ end
         g_builder = make_test_game(board=b_builder, dice=(1, 2), current_player=0)
         obs_builder = observe_biased(g_builder)
         # My builders = 3
-        @test obs_builder[111, 1, 1] == 1.0f0
-        @test obs_builder[113, 1, 1] == 1.0f0  # >=3
-        @test obs_builder[114, 1, 1] == 0.0f0  # >=4
+        @test obs_builder[123, 1, 1] == 1.0f0
+        @test obs_builder[125, 1, 1] == 1.0f0  # >=3
+        @test obs_builder[126, 1, 1] == 0.0f0  # >=4
         # Opp builders = 1
-        @test obs_builder[117, 1, 1] == 1.0f0
-        @test obs_builder[118, 1, 1] == 0.0f0
+        @test obs_builder[129, 1, 1] == 1.0f0
+        @test obs_builder[130, 1, 1] == 0.0f0
     end
 
     @testset "Observation Hierarchy" begin
@@ -1660,11 +1660,11 @@ end
         obs_full = observe_full(g)
         obs_biased = observe_biased(g)
 
-        # Full should contain minimal (channels 1-30)
-        @test obs_full[1:30, :, :] ≈ obs_min atol=1e-6
+        # Full should contain minimal (channels 1-42)
+        @test obs_full[1:42, :, :] ≈ obs_min atol=1e-6
 
-        # Biased should contain full (channels 1-62)
-        @test obs_biased[1:62, :, :] ≈ obs_full atol=1e-6
+        # Biased should contain full (channels 1-74)
+        @test obs_biased[1:74, :, :] ≈ obs_full atol=1e-6
     end
 
     @testset "In-Place Observation Functions" begin
@@ -1716,8 +1716,8 @@ end
                 @test all(obs_biased .<= 1.5f0) && all(obs_biased .>= -1.5f0)
 
                 # Hierarchy should hold
-                @test obs_full[1:30, :, :] ≈ obs_min atol=1e-6
-                @test obs_biased[1:62, :, :] ≈ obs_full atol=1e-6
+                @test obs_full[1:42, :, :] ≈ obs_min atol=1e-6
+                @test obs_biased[1:74, :, :] ≈ obs_full atol=1e-6
             end
 
             actions = legal_actions(g)
@@ -1731,35 +1731,35 @@ end
         # Don't roll dice - game starts at chance node
         @test is_chance_node(g_chance)
         obs_chance = observe_full(g_chance)
-        @test obs_chance[31, 1, 1] == 0.0f0  # dice_sum should be 0 at chance node
+        @test obs_chance[43, 1, 1] == 0.0f0  # dice_sum should be 0 at chance node
 
         # Test dice_sum minimum (1+1=2)
         b = zeros(MVector{28, Int8})
         b[1] = 2
         g_min_dice = make_test_game(board=b, dice=(1, 1), remaining=2, current_player=0)
         obs_min_dice = observe_full(g_min_dice)
-        @test obs_min_dice[31, 1, 1] ≈ 2.0f0/12.0f0 atol=1e-6
+        @test obs_min_dice[43, 1, 1] ≈ 2.0f0/12.0f0 atol=1e-6
 
         # Test dice_sum maximum (6+6=12)
         g_max_dice = make_test_game(board=b, dice=(6, 6), remaining=2, current_player=0)
         obs_max_dice = observe_full(g_max_dice)
-        @test obs_max_dice[31, 1, 1] ≈ 1.0f0 atol=1e-6  # 12/12 = 1.0
+        @test obs_max_dice[43, 1, 1] ≈ 1.0f0 atol=1e-6  # 12/12 = 1.0
 
         # Test dice_delta on chance node (should be 0)
-        @test obs_chance[32, 1, 1] == 0.0f0  # dice_delta should be 0 at chance node
+        @test obs_chance[44, 1, 1] == 0.0f0  # dice_delta should be 0 at chance node
 
         # Test contact on empty board (no checkers)
         b_empty = zeros(MVector{28, Int8})
         g_empty = make_test_game(board=b_empty, dice=(3, 4), current_player=0)
         obs_empty = observe_full(g_empty)
-        @test obs_empty[33, 1, 1] == 0.0f0  # No contact on empty board
+        @test obs_empty[45, 1, 1] == 0.0f0  # No contact on empty board
 
         # Test contact when only one side has checkers
         b_one_side = zeros(MVector{28, Int8})
         b_one_side[10] = 5  # Only my checkers
         g_one_side = make_test_game(board=b_one_side, dice=(3, 4), current_player=0)
         obs_one_side = observe_full(g_one_side)
-        @test obs_one_side[33, 1, 1] == 0.0f0  # No contact (no opponent)
+        @test obs_one_side[45, 1, 1] == 0.0f0  # No contact (no opponent)
 
         # Test 6+ overflow at exact boundary (count = 5)
         b_boundary = zeros(MVector{28, Int8})
@@ -1783,13 +1783,13 @@ end
         @test all(obs_chance .<= 1.0f0)
 
         # Test pip counts are 0 on empty board
-        @test obs_empty[34, 1, 1] == 0.0f0  # my_pips
-        @test obs_empty[35, 1, 1] == 0.0f0  # opp_pips
-        @test obs_empty[36, 1, 1] == 0.0f0  # pip_diff
+        @test obs_empty[46, 1, 1] == 0.0f0  # my_pips
+        @test obs_empty[47, 1, 1] == 0.0f0  # opp_pips
+        @test obs_empty[48, 1, 1] == 0.0f0  # pip_diff
 
         # Test can_bear_off on empty board (vacuously true - no checkers outside home)
-        @test obs_empty[37, 1, 1] == 1.0f0  # can bear off (no checkers to block it)
-        @test obs_empty[38, 1, 1] == 1.0f0  # opp can bear off
+        @test obs_empty[49, 1, 1] == 1.0f0  # can bear off (no checkers to block it)
+        @test obs_empty[50, 1, 1] == 1.0f0  # opp can bear off
     end
 
     @testset "Scoring & Perspective" begin
@@ -2670,7 +2670,7 @@ end
             sample_chance!(g)
             obs_flat = observe_minimal_flat(g)
             @test length(obs_flat) == OBS_FLAT_MINIMAL
-            @test length(obs_flat) == 330
+            @test length(obs_flat) == 342
         end
 
         @testset "observe_full_flat dimensions" begin
@@ -2678,7 +2678,7 @@ end
             sample_chance!(g)
             obs_flat = observe_full_flat(g)
             @test length(obs_flat) == OBS_FLAT_FULL
-            @test length(obs_flat) == 362
+            @test length(obs_flat) == 374
         end
 
         @testset "observe_biased_flat dimensions" begin
@@ -2686,7 +2686,7 @@ end
             sample_chance!(g)
             obs_flat = observe_biased_flat(g)
             @test length(obs_flat) == OBS_FLAT_BIASED
-            @test length(obs_flat) == 422
+            @test length(obs_flat) == 434
         end
 
         @testset "flat vs 3D feature equivalence" begin
@@ -2743,9 +2743,9 @@ end
         end
 
         @testset "OBSERVATION_SIZES includes flat" begin
-            @test OBSERVATION_SIZES.minimal_flat == 330
-            @test OBSERVATION_SIZES.full_flat == 362
-            @test OBSERVATION_SIZES.biased_flat == 422
+            @test OBSERVATION_SIZES.minimal_flat == 342
+            @test OBSERVATION_SIZES.full_flat == 374
+            @test OBSERVATION_SIZES.biased_flat == 434
         end
 
         @testset "observe() dispatches on obs_type" begin
@@ -2754,23 +2754,23 @@ end
             sample_chance!(g_flat)
             obs_flat = observe(g_flat)
             @test obs_flat isa Vector{Float32}
-            @test length(obs_flat) == 330
+            @test length(obs_flat) == 342
 
             # Test 3D observations
             g_3d = initial_state(first_player=0, obs_type=:full)
             sample_chance!(g_3d)
             obs_3d = observe(g_3d)
             @test obs_3d isa Array{Float32, 3}
-            @test size(obs_3d) == (62, 1, 26)
+            @test size(obs_3d) == (74, 1, 26)
 
             # Test all observation types
             for (obs_type, expected_size) in [
-                (:minimal, (30, 1, 26)),
-                (:full, (62, 1, 26)),
-                (:biased, (122, 1, 26)),
-                (:minimal_flat, 330),
-                (:full_flat, 362),
-                (:biased_flat, 422),
+                (:minimal, (42, 1, 26)),
+                (:full, (74, 1, 26)),
+                (:biased, (134, 1, 26)),
+                (:minimal_flat, 342),
+                (:full_flat, 374),
+                (:biased_flat, 434),
             ]
                 g = initial_state(first_player=0, obs_type=obs_type)
                 sample_chance!(g)
@@ -2786,33 +2786,33 @@ end
         @testset "obs_dims returns correct dimensions" begin
             # Test game-level obs_dims
             g = initial_state(obs_type=:minimal_flat)
-            @test obs_dims(g) == 330
+            @test obs_dims(g) == 342
 
             g2 = initial_state(obs_type=:full)
-            @test obs_dims(g2) == (62, 1, 26)
+            @test obs_dims(g2) == (74, 1, 26)
 
             # Test symbol-level obs_dims
-            @test obs_dims(:minimal) == (30, 1, 26)
-            @test obs_dims(:full) == (62, 1, 26)
-            @test obs_dims(:biased) == (122, 1, 26)
-            @test obs_dims(:minimal_flat) == 330
-            @test obs_dims(:full_flat) == 362
-            @test obs_dims(:biased_flat) == 422
+            @test obs_dims(:minimal) == (42, 1, 26)
+            @test obs_dims(:full) == (74, 1, 26)
+            @test obs_dims(:biased) == (134, 1, 26)
+            @test obs_dims(:minimal_flat) == 342
+            @test obs_dims(:full_flat) == 374
+            @test obs_dims(:biased_flat) == 434
         end
 
         @testset "set_obs_type! changes observation type" begin
             g = initial_state(obs_type=:minimal_flat)
             @test g.obs_type == :minimal_flat
-            @test obs_dims(g) == 330
+            @test obs_dims(g) == 342
 
             set_obs_type!(g, :full)
             @test g.obs_type == :full
-            @test obs_dims(g) == (62, 1, 26)
+            @test obs_dims(g) == (74, 1, 26)
 
             # Test that observe() returns correct type after change
             sample_chance!(g)
             obs = observe(g)
-            @test size(obs) == (62, 1, 26)
+            @test size(obs) == (74, 1, 26)
         end
 
         @testset "clone preserves obs_type" begin
@@ -2820,7 +2820,7 @@ end
             sample_chance!(g)
             g_clone = clone(g)
             @test g_clone.obs_type == :biased_flat
-            @test obs_dims(g_clone) == 422
+            @test obs_dims(g_clone) == 434
         end
 
         @testset "hybrid observations" begin
@@ -2833,17 +2833,17 @@ end
             @test haskey(obs, :board)
             @test haskey(obs, :globals)
             @test size(obs.board) == (12, 26)
-            @test length(obs.globals) == 18
+            @test length(obs.globals) == 30
 
             # Test full hybrid
             obs_full = observe_full_hybrid(g)
             @test size(obs_full.board) == (12, 26)
-            @test length(obs_full.globals) == 50
+            @test length(obs_full.globals) == 62
 
             # Test biased hybrid
             obs_biased = observe_biased_hybrid(g)
             @test size(obs_biased.board) == (12, 26)
-            @test length(obs_biased.globals) == 110
+            @test length(obs_biased.globals) == 122
 
             # Test that board matches flat encoding
             obs_flat = observe_minimal_flat(g)
@@ -2857,7 +2857,7 @@ end
             end
 
             # Test that globals match flat encoding
-            for i in 1:18
+            for i in 1:30
                 @test obs.globals[i] == obs_flat[312 + i]
             end
         end
@@ -2868,16 +2868,16 @@ end
             obs = observe(g)
             @test obs isa NamedTuple
             @test size(obs.board) == (12, 26)
-            @test length(obs.globals) == 18
+            @test length(obs.globals) == 30
 
             # Test obs_dims for hybrid
             dims = obs_dims(g)
             @test dims.board == (12, 26)
-            @test dims.globals == 18
+            @test dims.globals == 30
 
             dims_full = obs_dims(:full_hybrid)
             @test dims_full.board == (12, 26)
-            @test dims_full.globals == 50
+            @test dims_full.globals == 62
         end
     end
 
@@ -3238,6 +3238,86 @@ end
                 step!(g, actions[rand(1:length(actions))])
             end
         end
+    end
+
+    @testset "Cube/Match Observation Channels" begin
+        # Default game: money play, cube disabled, CHANCE phase
+        g = initial_state()
+        obs = observe_minimal(g)
+
+        # Channels 31-33: phase one-hot (CHANCE = none active)
+        @test obs[31, 1, 1] == 0.0f0  # Not CUBE_DECISION
+        @test obs[32, 1, 1] == 0.0f0  # Not CUBE_RESPONSE
+        @test obs[33, 1, 1] == 0.0f0  # Not CHECKER_PLAY (CHANCE phase)
+        # Channel 34: cube_value = log2(1)/6 = 0
+        @test obs[34, 1, 1] == 0.0f0
+        # Channel 35-36: cube_owner = 0 (centered)
+        @test obs[35, 1, 1] == 0.0f0  # Not "I own"
+        @test obs[36, 1, 1] == 1.0f0  # Centered
+        # Channel 37: may_double = false (cube disabled)
+        @test obs[37, 1, 1] == 0.0f0
+        # Channel 38: money play = true
+        @test obs[38, 1, 1] == 1.0f0
+        # Channels 39-40: away scores = 0
+        @test obs[39, 1, 1] == 0.0f0
+        @test obs[40, 1, 1] == 0.0f0
+        # Channels 41-42: Crawford flags = false
+        @test obs[41, 1, 1] == 0.0f0
+        @test obs[42, 1, 1] == 0.0f0
+
+        # Cube-enabled game in CHECKER_PLAY phase
+        g2 = initial_state(first_player=0)
+        g2.cube_enabled = true
+        sample_chance!(g2)
+        obs2 = observe_minimal(g2)
+        @test obs2[33, 1, 1] == 1.0f0  # CHECKER_PLAY
+        @test obs2[31, 1, 1] == 0.0f0
+        @test obs2[32, 1, 1] == 0.0f0
+
+        # Cube decision phase
+        g3 = initial_state(first_player=0)
+        g3.cube_enabled = true
+        g3.phase = BackgammonNet.PHASE_CUBE_DECISION
+        obs3 = observe_minimal(g3)
+        @test obs3[31, 1, 1] == 1.0f0  # CUBE_DECISION
+        @test obs3[37, 1, 1] == 1.0f0  # Can double
+
+        # Cube value = 4
+        g4 = initial_state(first_player=0)
+        g4.cube_value = Int16(4)
+        obs4 = observe_minimal(g4)
+        @test obs4[34, 1, 1] ≈ log2(4.0f0) / 6.0f0
+
+        # Cube owner = +1 (I own)
+        g4.cube_owner = Int8(1)
+        obs4b = observe_minimal(g4)
+        @test obs4b[35, 1, 1] == 1.0f0  # I own
+        @test obs4b[36, 1, 1] == 0.0f0  # Not centered
+
+        # Match play with Crawford
+        g5 = initial_state()
+        BackgammonNet.init_match_game!(g5, my_score=4, opp_score=2, match_length=5, is_crawford=true)
+        obs5 = observe_minimal(g5)
+        @test obs5[38, 1, 1] == 0.0f0  # Not money play
+        @test obs5[39, 1, 1] ≈ 1.0f0 / 25.0f0  # my_away=1
+        @test obs5[40, 1, 1] ≈ 3.0f0 / 25.0f0  # opp_away=3
+        @test obs5[41, 1, 1] == 1.0f0  # Crawford
+        @test obs5[42, 1, 1] == 0.0f0  # Not post-Crawford
+        @test obs5[37, 1, 1] == 0.0f0  # Cannot double in Crawford
+
+        # Verify broadcast: all 26 spatial positions should match
+        for w in 2:OBS_WIDTH
+            @test obs5[31, 1, w] == obs5[31, 1, 1]
+            @test obs5[38, 1, w] == obs5[38, 1, 1]
+            @test obs5[39, 1, w] == obs5[39, 1, 1]
+        end
+
+        # Verify flat encoding matches
+        obs5_flat = observe_minimal_flat(g5)
+        @test obs5_flat[331] == obs5[31, 1, 1]  # Phase CUBE_DECISION
+        @test obs5_flat[338] == obs5[38, 1, 1]  # Money play
+        @test obs5_flat[341] == obs5[41, 1, 1]  # Crawford
+        @test obs5_flat[342] == obs5[42, 1, 1]  # Post-Crawford
     end
 
     @testset "Context Observations" begin
