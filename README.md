@@ -4,9 +4,11 @@ High-performance Backgammon implementation in Julia, designed for AlphaZero.jl.
 
 ## Features
 - Optimized bitboard representation (UInt128).
-- Player action indices 1-676, encoding two locations (0-25 each): `action = loc1*26 + loc2 + 1`.
+- Unified action space (680 actions): checker moves (1-676) + cube actions (677-680).
 - Chance action indices 1-21 for dice outcomes (in doubles-only mode, 6 have non-zero probability).
 - Strictly enforced Backgammon rules (forcing moves, max dice usage).
+- Cube decisions (double/take/pass) with correct ownership tracking.
+- Match play with Crawford rule, post-Crawford detection, and Jacoby rule.
 - Two modes of operation: Deterministic Step (auto-chance) and Explicit Phase (manual-chance).
 
 ## Usage
@@ -70,18 +72,23 @@ end
 - `initial_state(; first_player=nothing, short_game=false, doubles_only=false)`: Returns a new game (starts at chance node).
 - `reset!(g; first_player=nothing, short_game=false, doubles_only=false)`: Resets game to initial state without reallocating.
 - `clone(g)`: Creates a deep copy with fresh internal buffers (recommended for MCTS).
-- `legal_actions(g)`: Returns valid action indices (cached until state changes). At player nodes: 1-676. At chance nodes: 1-21.
+- `legal_actions(g)`: Returns valid action indices (cached until state changes). Checker play: 1-676. Cube decision: [677, 678]. Cube response: [679, 680]. Chance: 1-21.
 - `game_terminated(g)`: Bool.
 - `winner(g)`: Returns winning player ID (0 or 1) or `nothing` if not terminated.
-- `g.reward`: Player 0's reward (Single: ±1, Gammon: ±2, Backgammon: ±3). Positive if P0 wins.
+- `g.reward`: Player 0's reward. Without cube: ±1/±2/±3. With cube: ±(multiplier × cube_value). Positive if P0 wins.
 
-### Action Encoding (Player Nodes)
-Player actions are integers 1-676, encoding two source locations for the two dice:
+### Action Encoding (Unified Action Space)
+**Checker moves (1-676):** Two source locations for the two dice:
 - Location 0 = bar, 1-24 = board points, 25 = pass
 - `encode_action(loc1, loc2) = loc1*26 + loc2 + 1`
 - `decode_action(action)` returns `(loc1, loc2)`
 - For non-doubles: loc1 uses die1, loc2 uses die2
 - For doubles: both locations use the same die value
+
+**Cube actions (677-680):**
+- `ACTION_CUBE_NO_DOUBLE` (677), `ACTION_CUBE_DOUBLE` (678)
+- `ACTION_CUBE_TAKE` (679), `ACTION_CUBE_PASS` (680)
+- `MAX_ACTIONS = 680`
 
 ### Stepping
 - `step!(g, action, rng)`: High-level step. Applies action, then `sample_chance!` until deterministic.
@@ -96,18 +103,33 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 26
 
 | Function | Channels | Description |
 |----------|----------|-------------|
-| `observe_minimal(g)` | 30 | Raw board (threshold encoded) + dice (2 slots) + move count (4 bins) + off counts |
-| `observe_full(g)` | 62 | + arithmetic features (dice_sum, dice_delta, pips, contact, etc.) |
-| `observe_biased(g)` | 122 | + strategic features (primes, anchors, blots, builders) |
+| `observe_minimal(g)` | 42 | Raw board (threshold encoded) + dice (2 slots) + move count (4 bins) + off counts + cube/match state (12ch) |
+| `observe_full(g)` | 74 | + arithmetic features (dice_sum, dice_delta, pips, contact, etc.) |
+| `observe_biased(g)` | 134 | + strategic features (primes, anchors, blots, builders) |
+
+Also available: flat (342/374/434 values), hybrid (board 12×26 + globals 30/62/122).
 
 **Spatial Layout (1-indexed, Julia convention):**
 - Index 1: My bar (adjacent to my entry points 1-6 at indices 2-7)
 - Indices 2-25: Points 1-24 in canonical order (entry → home)
 - Index 26: Opponent bar (adjacent to their entry points 19-24 at indices 20-25)
 
-Each tier builds on the previous: `full[1:30] == minimal`, `biased[1:62] == full`.
+Each tier builds on the previous: `full[1:42] == minimal`, `biased[1:74] == full`.
 
 In-place versions available: `observe_minimal!`, `observe_full!`, `observe_biased!`.
+
+### Cube & Match Play
+```julia
+# Enable cube decisions
+g = initial_state()
+g.cube_enabled = true
+
+# Set up match play (7-point match, score 4-2, Crawford game)
+init_match_game!(g, my_score=4, opp_score=2, match_length=7, is_crawford=true)
+
+# Context observation for policy conditioning (12 features)
+ctx = context_observation(g)
+```
 
 ### Initialization Options
 - `first_player`: Set to `0` or `1` to choose starting player, or `nothing` for random.
@@ -142,7 +164,8 @@ julia --project benchmark.jl
 ```
 
 ## Structure
-- `src/game.jl`: Core structs, step logic, and state management.
-- `src/actions.jl`: Move generation, validation, and encoding.
-- `src/observation.jl`: 3-tier observation system (minimal/full/biased).
+- `src/game.jl`: Core structs, step logic, state management, cube/match state, `GamePhase` enum.
+- `src/actions.jl`: Move generation, validation, encoding, cube action constants (677-680), `may_double`.
+- `src/observation.jl`: 3-tier observation system (minimal/full/biased), cube/match channels (31-42), `context_observation`.
+- `tools/validate_cube_match.jl`: Comprehensive cube/match validation (637 checks).
 - `requirements.txt`: Python dependencies for gnubg integration and wandb logging.

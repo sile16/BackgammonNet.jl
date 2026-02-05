@@ -4,6 +4,90 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## Release Notes - v0.4.0
+
+### Breaking Changes
+- **Cube owner uses absolute player IDs**: `cube_owner` changed from relative semantics (`+1`=current player, `-1`=opponent, `0`=centered) to absolute (`-1`=centered, `0`=player 0 owns, `1`=player 1 owns). The relative encoding was never flipped on turn switches, causing the wrong player to be able to double after a TAKE.
+- **Observation sizes increased (+12 channels)**: Cube/match state encoded in channels 31-42 of minimal observation. All downstream sizes shift accordingly:
+
+  | Format | Old | New |
+  |--------|-----|-----|
+  | `OBS_CHANNELS_MINIMAL` | 30 | 42 |
+  | `OBS_CHANNELS_FULL` | 62 | 74 |
+  | `OBS_CHANNELS_BIASED` | 122 | 134 |
+  | `OBS_FLAT_MINIMAL` | 330 | 342 |
+  | `OBS_FLAT_FULL` | 362 | 374 |
+  | `OBS_FLAT_BIASED` | 422 | 434 |
+  | `OBS_HYBRID_GLOBALS_MINIMAL` | 18 | 30 |
+  | `OBS_HYBRID_GLOBALS_FULL` | 50 | 62 |
+  | `OBS_HYBRID_GLOBALS_BIASED` | 110 | 122 |
+
+- **Reward values can exceed ±3**: With cube, rewards are `±(multiplier × cube_value)`. E.g., backgammon at cube 4 = ±12.
+- **PyCall added to [deps]**: Required for gnubg validation tooling.
+
+### New Features
+- **Cube decisions**: Unified action space (680 actions). Actions 1-676 checker moves, 677-680 cube actions (NO_DOUBLE, DOUBLE, TAKE, PASS).
+- **Match play**: `init_match_game!` sets away scores, Crawford/post-Crawford flags, and cube eligibility.
+- **GamePhase enum**: `PHASE_CHANCE`, `PHASE_CUBE_DECISION`, `PHASE_CUBE_RESPONSE`, `PHASE_CHECKER_PLAY` — controls which actions are legal.
+- **Cube/match observation channels (31-42)**: Phase one-hot, cube value (log2/6), cube ownership, can-double flag, money play flag, away scores (/25), Crawford, post-Crawford.
+- **Context observation**: `context_observation(g)` returns 12-element Float32 vector for policy conditioning. Supports masking for context dropout.
+- **Jacoby rule**: In money play with `jacoby_enabled`, gammons/backgammons reduced to singles if cube not turned.
+- **`compute_game_reward`**: Accounts for cube value and Jacoby rule.
+
+### Bug Fixes
+- **Fixed cube ownership tracking after TAKE**: After DOUBLE→TAKE, the doubler could illegally double again because `cube_owner=+1` (relative "current player") was never flipped when turns switched. Fixed by switching to absolute player IDs.
+
+### Performance
+- **Pre-allocated cube action arrays**: `legal_actions` for cube phases uses `const` arrays (`CUBE_DECISION_ACTIONS`, `CUBE_RESPONSE_ACTIONS`) instead of allocating per call, consistent with `CHANCE_ACTIONS` pattern.
+
+### Validation Results (v0.4.0)
+
+**Cube/match validation** (`tools/validate_cube_match.jl`): 20 test functions, 637/637 checks pass.
+
+| Test | Checks | Status |
+|------|--------|--------|
+| Cube action flow (NO_DOUBLE, DOUBLE→TAKE, DOUBLE→PASS) | 78 | PASS |
+| Phase transitions and legal actions per phase | 52 | PASS |
+| Cube value escalation (1→2→4→8→...→64) | 45 | PASS |
+| Cube ownership tracking across re-doubles | 38 | PASS |
+| Crawford game (no doubling allowed) | 24 | PASS |
+| Post-Crawford detection and cube eligibility | 21 | PASS |
+| Match scoring with away scores | 32 | PASS |
+| Jacoby rule (money play) | 28 | PASS |
+| Observation encoding (3D channels 31-42) | 67 | PASS |
+| Observation encoding (flat, hybrid) | 54 | PASS |
+| Context observation values | 36 | PASS |
+| Reward computation with cube multiplier | 42 | PASS |
+| Corner cases (high cube×backgammon, sign correctness) | 120 | PASS |
+
+**Corner case reward validation** (inline test, 172/172 checks):
+- Multi-level cube escalation with ownership tracking (cube 1→2→4→8→16→32→64)
+- High cube × gammon/backgammon rewards (up to ±192 points)
+- Jacoby rule interactions at various cube levels
+- Bearing-off reward correctness with active cube
+- Sign correctness for all player/winner combinations
+- 94/200 random games completed with cube>1, all rewards consistent with |reward|/cube ∈ {1, 2, 3}
+
+**gnubg position integrity** (40 evaluations via PyCall): All positions produce valid gnubg equity values, confirming board state is not corrupted by cube/match extensions.
+
+**Full test suite**: 252,218 tests pass.
+
+### Lessons Learned
+
+**1. Relative vs absolute ownership is a subtle trap:**
+The original plan (CUBE_MATCH_IMPL_PLAN.md) specified `cube_owner` as relative to the current player (+1=me, -1=opponent, 0=centered). This is intuitive for observation encoding but fails at the game engine level because `switch_turn!` doesn't flip `cube_owner`. After DOUBLE→TAKE, the taker stores `cube_owner=+1` (meaning "I own it"), but on the next turn the doubler also sees `cube_owner=+1` (meaning "current player owns it") and can illegally double. Absolute IDs (-1=centered, 0=P0, 1=P1) require no flipping and are unambiguous.
+
+**2. Observation encoding must translate absolute→relative:**
+Even though the engine uses absolute cube_owner, observations must still present ownership from the current player's perspective. The 3D/flat encoders use `cube_owner == current_player` for "I own" and `cube_owner == -1` for "centered". The context observation uses a ternary: +1.0 (I own), 0.0 (centered), -1.0 (opponent owns).
+
+**3. Cube phases with zero dice are not chance nodes:**
+The old `is_chance_node` checked `dice == (0,0)`, which is true both at chance nodes AND during cube decision (before dice are rolled). Switching to `phase == PHASE_CHANCE` correctly distinguishes these states.
+
+**4. Reward distribution changes with cube:**
+Without cube, rewards are always ±1/±2/±3. With cube, rewards scale as `multiplier × cube_value`. A backgammon at cube 64 yields ±192. Training pipelines that normalize rewards by a fixed constant need updating.
+
+---
+
 ## Release Notes - v0.3.2
 
 ### Breaking Changes
@@ -16,13 +100,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### New Features
 - **Flat observations**: Same features as 3D but without spatial broadcasting
-  - `observe_minimal_flat()` → 330 values (vs 30×1×26=780 in 3D)
-  - `observe_full_flat()` → 362 values (vs 62×1×26=1612 in 3D)
-  - `observe_biased_flat()` → 422 values (vs 122×1×26=3172 in 3D)
+  - `observe_minimal_flat()` → 342 values (vs 42×1×26=1092 in 3D)
+  - `observe_full_flat()` → 374 values (vs 74×1×26=1924 in 3D)
+  - `observe_biased_flat()` → 434 values (vs 134×1×26=3484 in 3D)
 - **Hybrid observations**: Board spatial (12×26) + globals flat (NamedTuple)
-  - `observe_minimal_hybrid()` → (board=12×26, globals=18)
-  - `observe_full_hybrid()` → (board=12×26, globals=50)
-  - `observe_biased_hybrid()` → (board=12×26, globals=110)
+  - `observe_minimal_hybrid()` → (board=12×26, globals=30)
+  - `observe_full_hybrid()` → (board=12×26, globals=62)
+  - `observe_biased_hybrid()` → (board=12×26, globals=122)
   - Ideal for conv1d on board, then concatenate globals before dense layers
 - **Configurable observation type per game**:
   - `initial_state(obs_type=:minimal_flat)` - set at creation
@@ -104,13 +188,13 @@ copy = BackgammonGame(g.p0, g.p1, g.dice, ...)
 copy = clone(g)
 
 # New - observation API (v0.3.2)
-g = initial_state(obs_type=:minimal_flat)  # 330-element vector
+g = initial_state(obs_type=:minimal_flat)  # 342-element vector
 obs = observe(g)                            # Dispatches based on obs_type
-dims = obs_dims(g)                          # Returns 330
+dims = obs_dims(g)                          # Returns 342
 
 # Available obs_type values:
-# :minimal (30×1×26), :full (62×1×26), :biased (122×1×26)
-# :minimal_flat (330), :full_flat (362), :biased_flat (422)
+# :minimal (42×1×26), :full (74×1×26), :biased (134×1×26)
+# :minimal_flat (342), :full_flat (374), :biased_flat (434)
 # :minimal_hybrid, :full_hybrid, :biased_hybrid (NamedTuple with board + globals)
 ```
 
@@ -185,10 +269,23 @@ For P1 (home board physical 1-6):
 
 "Higher" in backgammon = further from off = LOWER physical index for P0, HIGHER physical index for P1.
 
-### Action Encoding
-Actions are encoded as `(loc1 * 26) + loc2 + 1` where:
+### Action Encoding (Unified Action Space, 680 actions)
+
+**Checker moves (1-676):** Encoded as `(loc1 * 26) + loc2 + 1` where:
 - `loc1`: source for HIGH die (dice[1]) - 0=bar, 1-24=points, 25=pass
 - `loc2`: source for LOW die (dice[2])
+
+**Cube actions (677-680):**
+- 677: `ACTION_CUBE_NO_DOUBLE` (decline to double, proceed to dice roll)
+- 678: `ACTION_CUBE_DOUBLE` (offer double to opponent)
+- 679: `ACTION_CUBE_TAKE` (accept opponent's double)
+- 680: `ACTION_CUBE_PASS` (decline opponent's double, forfeit game)
+
+**Phase determines which actions are legal:**
+- `PHASE_CHECKER_PLAY`: subset of 1-676
+- `PHASE_CUBE_DECISION`: [677, 678]
+- `PHASE_CUBE_RESPONSE`: [679, 680]
+- `PHASE_CHANCE`: 1-21 (dice outcomes)
 
 **Dice ordering is consistent throughout:**
 - `DICE_OUTCOMES` stores tuples as (high, low)
@@ -202,19 +299,29 @@ For doubles, two actions are needed per turn (`remaining_actions = 2`).
 1. **Deterministic (`step!`)**: Auto-rolls dice after each action. Used for RL training.
 2. **Explicit (`apply_action!`/`apply_chance!`)**: Manual dice control. Used for MCTS.
 
-A game starts at a chance node (dice = [0,0]). Call `sample_chance!` or use `step!` to roll.
+A game starts at a chance node (`phase == PHASE_CHANCE`). Call `sample_chance!` or use `step!` to roll.
+
+**Game flow with cube enabled:**
+1. `switch_turn!` → `PHASE_CUBE_DECISION` (if `may_double`) or `PHASE_CHANCE`
+2. Player chooses NO_DOUBLE (→ `PHASE_CHANCE`) or DOUBLE (→ `PHASE_CUBE_RESPONSE`, opponent's turn)
+3. Opponent chooses TAKE (cube doubles, → `PHASE_CHANCE`, back to doubler) or PASS (game ends)
+4. `apply_chance!` → `PHASE_CHECKER_PLAY`
+5. Checker moves, then back to step 1
 
 ### Key Files
-- `src/game.jl`: `BackgammonGame` struct, move application, termination/scoring, bitboard helpers
-- `src/actions.jl`: `legal_actions`, action encoding/decoding, move generation with forced-move rules
-- `src/observation.jl`: 3-tier observation system: `observe_minimal` (30ch), `observe_full` (62ch), `observe_biased` (122ch)
+- `src/game.jl`: `BackgammonGame` struct, move application, termination/scoring, bitboard helpers, cube/match state, `GamePhase` enum
+- `src/actions.jl`: `legal_actions`, action encoding/decoding, move generation with forced-move rules, cube action constants (677-680), `may_double`
+- `src/observation.jl`: 3-tier observation system: `observe_minimal` (42ch), `observe_full` (74ch), `observe_biased` (134ch), cube/match channels (31-42), `context_observation`
 
 ### Game Rules Enforced
 - Bar entry priority (must enter from bar before moving other pieces)
 - Bearing off validation with over-bear rules (uses precomputed bitmasks)
 - Forced maximum dice usage
 - Higher die preference when only one die can be used
-- Gammon/Backgammon scoring multipliers (reward: 1/2/3)
+- Gammon/Backgammon scoring multipliers (reward: ±multiplier × cube_value)
+- Cube decisions: double/take/pass with correct ownership tracking
+- Crawford rule: no doubling in Crawford game
+- Jacoby rule: gammons/backgammons reduced to singles if cube not turned (money play)
 
 ### Valid Shortcuts in Logic Validation
 
@@ -248,9 +355,9 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 26
 
 | Tier | Channels | Content |
 |------|----------|---------|
-| `observe_minimal` | 30 | Raw board (threshold 1-6+) + dice (2 slots) + move count (4 bins) + off counts |
-| `observe_full` | 62 | + arithmetic features (dice_sum, dice_delta, pips, contact, stragglers, remaining) |
-| `observe_biased` | 122 | + strategic features (primes, anchors, blots, builders) |
+| `observe_minimal` | 42 | Raw board (threshold 1-6+) + dice (2 slots) + move count (4 bins) + off counts + cube/match state (12ch) |
+| `observe_full` | 74 | + arithmetic features (dice_sum, dice_delta, pips, contact, stragglers, remaining) |
+| `observe_biased` | 134 | + strategic features (primes, anchors, blots, builders) |
 
 **Spatial layout (1-indexed, Julia convention):**
 - Index 1: My bar (adjacent to my entry points 1-6 at indices 2-7)
@@ -259,7 +366,7 @@ Three observation tiers with increasing feature complexity (shape: `C × 1 × 26
 
 This symmetric layout enables 1D CNN kernels to naturally capture both bar→entry point relationships: my bar adjacent to points 1-6, and opponent's bar adjacent to points 19-24.
 
-**Hierarchy property:** Each tier extends the previous (`full[1:30] == minimal`, `biased[1:62] == full`).
+**Hierarchy property:** Each tier extends the previous (`full[1:42] == minimal`, `biased[1:74] == full`).
 
 **In-place versions:** `observe_minimal!`, `observe_full!`, `observe_biased!` for high-throughput scenarios (MCTS, batch eval) to avoid GC pressure.
 
@@ -390,12 +497,15 @@ When used with AlphaZero.jl MCTS, the call sequence during simulation is:
 
 The Julia implementation has been validated against gnubg by comparing **final board states** after each turn. All unique final positions computed by Julia match exactly what gnubg computes.
 
-**Validated commit:** `c48ef94` (2026-01-27)
+**Validated commit:** `4764734` (2026-02-05)
 
 **Latest validation run:**
 - Final states (hybrid): **500 games, 44,303 positions, 0 mismatches** (~63 pos/sec, ~0.7 games/sec)
 - Legal actions (direct): **100 games, 9,004 positions, 0 mismatches**
 - Reward validation: **5,000 games, 0 mismatches** (~3,734 games/sec)
+- Cube/match validation: **637/637 checks pass** (20 test functions)
+- Corner case rewards: **172/172 checks pass** (cube escalation, Jacoby, high multipliers)
+- gnubg position integrity: **40/40 evaluations valid** (cube extensions don't corrupt board state)
 
 ### Why Two gnubg Interfaces?
 
@@ -422,6 +532,7 @@ We have two separate interfaces for gnubg, each serving a different purpose:
 |--------|-------|-------------|
 | `test/gnubg_hybrid.jl` | ~63 pos/sec, ~0.7 games/sec | Parallel CLI validation (compares final board states) |
 | `test/validate_rewards.jl` | ~3,700 games/sec | Fast Julia-only reward validation |
+| `tools/validate_cube_match.jl` | instant | 20 cube/match test functions (637 checks) |
 
 ```bash
 # Run move validation (uses gnubg CLI, 4 threads)
@@ -429,6 +540,9 @@ julia --project -t4 test/gnubg_hybrid.jl 500
 
 # Run reward validation (fast, Julia-only)
 julia --project test/validate_rewards.jl 5000
+
+# Run cube/match validation
+julia --project=. tools/validate_cube_match.jl
 ```
 
 ### Reward Validation Details

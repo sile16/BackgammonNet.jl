@@ -326,7 +326,18 @@ function legal_actions(g::BackgammonGame)
         end
     end
 
-    unique!(actions)
+    # Optimize unique! to avoid allocations (standard unique! allocates Set)
+    if !isempty(actions)
+        sort!(actions)
+        j = 1
+        @inbounds for i in 2:length(actions)
+            if actions[i] != actions[j]
+                j += 1
+                actions[j] = actions[i]
+            end
+        end
+        resize!(actions, j)
+    end
 
     if isempty(actions)
         # Add PASS|PASS to the buffer so caching works correctly
