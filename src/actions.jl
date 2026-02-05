@@ -207,6 +207,8 @@ end
 
 const CHANCE_ACTIONS = collect(1:21)  # Pre-allocated chance node actions
 const PASS_PASS_ACTION = [encode_action(PASS_LOC, PASS_LOC)]  # Pre-allocated for no-move case
+const CUBE_DECISION_ACTIONS = Int[ACTION_CUBE_NO_DOUBLE, ACTION_CUBE_DOUBLE]
+const CUBE_RESPONSE_ACTIONS = Int[ACTION_CUBE_TAKE, ACTION_CUBE_PASS]
 
 """
     legal_actions(g::BackgammonGame) -> Vector{Int}
@@ -230,9 +232,9 @@ function legal_actions(g::BackgammonGame)
 
     # Cube decision/response phases return fixed cube actions
     if g.phase == PHASE_CUBE_DECISION
-        return Int[ACTION_CUBE_NO_DOUBLE, ACTION_CUBE_DOUBLE]
+        return CUBE_DECISION_ACTIONS
     elseif g.phase == PHASE_CUBE_RESPONSE
-        return Int[ACTION_CUBE_TAKE, ACTION_CUBE_PASS]
+        return CUBE_RESPONSE_ACTIONS
     end
 
     # Return cached result if available
