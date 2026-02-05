@@ -1609,3 +1609,77 @@ const OBSERVATION_SIZES = (
     hybrid_globals_full = OBS_HYBRID_GLOBALS_FULL,
     hybrid_globals_biased = OBS_HYBRID_GLOBALS_BIASED,
 )
+
+# ─── Context Observation (cube/match state for policy conditioning) ──────────
+
+"""
+    CONTEXT_DIM
+
+Number of features in the context observation vector (12).
+"""
+const CONTEXT_DIM = 12
+
+"""
+    context_observation(g::BackgammonGame) -> Vector{Float32}
+
+Returns competitive context features for policy conditioning.
+Length: `CONTEXT_DIM` (12 features).
+
+Features (normalized to roughly [-1, 1] or [0, 1]):
+1. `log2(cube_value) / 6` — cube level (64 → 1.0)
+2. `cube_owner` — -1 (opponent), 0 (centered), +1 (current player)
+3. `may_double` — 1.0 if current player can double
+4. `is_money` — 1.0 for money play (no match)
+5. `my_away / max_away` — normalized distance to match win
+6. `opp_away / max_away` — normalized opponent distance
+7. `is_crawford` — 1.0 if Crawford game
+8. `is_post_crawford` — 1.0 if post-Crawford
+9. `jacoby_enabled` — 1.0 if Jacoby rule active
+10-12. Phase one-hot: CUBE_DECISION, CUBE_RESPONSE, CHECKER_PLAY
+"""
+function context_observation(g::BackgammonGame)::Vector{Float32}
+    ctx = zeros(Float32, CONTEXT_DIM)
+
+    # Cube state
+    ctx[1] = log2(Float32(g.cube_value)) / 6.0f0
+    ctx[2] = Float32(g.cube_owner)
+    ctx[3] = may_double(g) ? 1.0f0 : 0.0f0
+
+    # Match state
+    is_money = g.my_away == Int8(0)
+    ctx[4] = is_money ? 1.0f0 : 0.0f0
+
+    if !is_money
+        max_away = max(g.my_away, g.opp_away, Int8(1))
+        ctx[5] = Float32(g.my_away) / Float32(max_away)
+        ctx[6] = Float32(g.opp_away) / Float32(max_away)
+    end
+
+    # Crawford/Jacoby flags
+    ctx[7] = g.is_crawford ? 1.0f0 : 0.0f0
+    ctx[8] = g.is_post_crawford ? 1.0f0 : 0.0f0
+    ctx[9] = g.jacoby_enabled ? 1.0f0 : 0.0f0
+
+    # Phase encoding (one-hot)
+    ctx[10] = g.phase == PHASE_CUBE_DECISION ? 1.0f0 : 0.0f0
+    ctx[11] = g.phase == PHASE_CUBE_RESPONSE ? 1.0f0 : 0.0f0
+    ctx[12] = g.phase == PHASE_CHECKER_PLAY ? 1.0f0 : 0.0f0
+
+    return ctx
+end
+
+"""
+    masked_context() -> Vector{Float32}
+
+Returns a zero context vector for training with context dropout.
+"""
+masked_context() = zeros(Float32, CONTEXT_DIM)
+
+"""
+    context_observation(g::BackgammonGame, mask::Bool) -> Vector{Float32}
+
+If `mask=true`, returns zeros (for context dropout). Otherwise returns full context.
+"""
+function context_observation(g::BackgammonGame, mask::Bool)::Vector{Float32}
+    return mask ? masked_context() : context_observation(g)
+end

@@ -28,6 +28,15 @@ export observe, obs_dims, set_obs_type!
 
 export OBSERVATION_SIZES
 
+# Cube and match play
+export GamePhase, PHASE_CHANCE, PHASE_CUBE_DECISION, PHASE_CUBE_RESPONSE, PHASE_CHECKER_PLAY
+export ACTION_CUBE_NO_DOUBLE, ACTION_CUBE_DOUBLE, ACTION_CUBE_TAKE, ACTION_CUBE_PASS, MAX_ACTIONS
+export may_double, is_cube_action
+export compute_game_reward, init_match_game!
+
+# Context observations
+export context_observation, CONTEXT_DIM, masked_context
+
 include("game.jl")
 include("actions.jl")
 include("observation.jl")

@@ -4,6 +4,31 @@
 # Typically only a few locations are valid sources per die (checkers spread across 2-8 points).
 const SOURCES_HINT_SIZE = 8
 
+# --- Unified Action Space ---
+# Actions 1-676:  Checker moves (loc1 * 26 + loc2 + 1)
+# Actions 677-680: Cube actions
+const ACTION_CUBE_NO_DOUBLE = 677
+const ACTION_CUBE_DOUBLE    = 678
+const ACTION_CUBE_TAKE      = 679
+const ACTION_CUBE_PASS      = 680
+const MAX_ACTIONS            = 680
+
+@inline is_cube_action(action::Integer) = action >= ACTION_CUBE_NO_DOUBLE
+
+"""
+    may_double(g::BackgammonGame) -> Bool
+
+Check if the current player is allowed to offer a double.
+Returns false during Crawford games, when opponent owns the cube, or when terminated.
+"""
+@inline function may_double(g::BackgammonGame)::Bool
+    g.cube_enabled || return false
+    g.is_crawford && return false
+    g.terminated && return false
+    g.cube_owner == Int8(-1) && return false
+    return true
+end
+
 """
     encode_action(loc1::Integer, loc2::Integer) -> Int
 
@@ -197,6 +222,13 @@ function legal_actions(g::BackgammonGame)
         return CHANCE_ACTIONS  # Always return all 21 indices; use chance_outcomes() for probabilities
     end
 
+    # Cube decision/response phases return fixed cube actions
+    if g.phase == PHASE_CUBE_DECISION
+        return Int[ACTION_CUBE_NO_DOUBLE, ACTION_CUBE_DOUBLE]
+    elseif g.phase == PHASE_CUBE_RESPONSE
+        return Int[ACTION_CUBE_TAKE, ACTION_CUBE_PASS]
+    end
+
     # Return cached result if available
     if g._actions_cached
         return g._actions_buffer
@@ -360,6 +392,21 @@ for membership testing.
 function is_action_valid(g::BackgammonGame, action_idx::Integer)
     # Guard against chance nodes - no deterministic actions are valid
     if is_chance_node(g)
+        return false
+    end
+
+    # Cube actions valid only in corresponding phases
+    if is_cube_action(action_idx)
+        if g.phase == PHASE_CUBE_DECISION
+            return action_idx == ACTION_CUBE_NO_DOUBLE || action_idx == ACTION_CUBE_DOUBLE
+        elseif g.phase == PHASE_CUBE_RESPONSE
+            return action_idx == ACTION_CUBE_TAKE || action_idx == ACTION_CUBE_PASS
+        end
+        return false
+    end
+
+    # Checker actions not valid during cube phases
+    if g.phase == PHASE_CUBE_DECISION || g.phase == PHASE_CUBE_RESPONSE
         return false
     end
 

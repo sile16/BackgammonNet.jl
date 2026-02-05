@@ -62,6 +62,14 @@ const SOURCES_BUFFER_SIZE = 25      # Max source locations (24 points + bar)
 const HISTORY_BUFFER_SIZE = 120     # Typical game length in actions
 const MAX_CHANCE_ITERATIONS = 1000  # Safety limit for sample_chance! loop
 
+# --- Game Phase ---
+@enum GamePhase::Int8 begin
+    PHASE_CHANCE = 0        # Waiting for dice roll
+    PHASE_CUBE_DECISION = 1 # Before roll: player may double
+    PHASE_CUBE_RESPONSE = 2 # Opponent must take or pass
+    PHASE_CHECKER_PLAY = 3  # Normal checker move selection
+end
+
 """
     BackgammonGame
 
@@ -79,6 +87,18 @@ Mutable game state for backgammon, using bitboard representation.
 - `doubles_only::Bool`: If true, all dice rolls are doubles (for training variants)
 - `obs_type::Symbol`: Observation type for observe(g) dispatch
 
+# Cube State
+- `cube_value::Int16`: Current cube value (1, 2, 4, 8, ...)
+- `cube_owner::Int8`: Cube ownership (-1=opponent, 0=centered, +1=current player)
+- `phase::GamePhase`: Current game phase (CHANCE, CUBE_DECISION, CUBE_RESPONSE, CHECKER_PLAY)
+
+# Match State (my_away=0 and opp_away=0 means money play)
+- `my_away::Int8`: Points current player needs to win match (0=money play)
+- `opp_away::Int8`: Points opponent needs to win match
+- `is_crawford::Bool`: Crawford game (no doubling allowed)
+- `is_post_crawford::Bool`: Post-Crawford game
+- `jacoby_enabled::Bool`: Jacoby rule (money play: gammons don't count unless cube turned)
+
 # Internal Buffers (pre-allocated to reduce GC pressure)
 - `_actions_buffer`: Buffer for legal action generation
 - `_actions_cached`: Whether `_actions_buffer` contains valid cached actions
@@ -95,6 +115,18 @@ mutable struct BackgammonGame
     history::Vector{Int}
     doubles_only::Bool # If true, all dice rolls are doubles
     obs_type::Symbol   # Observation type: :minimal, :full, :biased, :minimal_flat, :full_flat, :biased_flat
+    # Cube state
+    cube_value::Int16
+    cube_owner::Int8       # -1=opponent, 0=centered, +1=current player
+    phase::GamePhase
+    cube_enabled::Bool     # Whether cube decisions are active (false = money play without cube)
+    # Match state (0/0 = money play)
+    my_away::Int8
+    opp_away::Int8
+    is_crawford::Bool
+    is_post_crawford::Bool
+    jacoby_enabled::Bool
+    # Internal buffers
     _actions_buffer::Vector{Int}    # Pre-allocated buffer for legal_actions (reduces GC)
     _actions_cached::Bool           # True if _actions_buffer contains valid cached actions
     _sources_buffer1::Vector{Int}   # Pre-allocated buffer for source locations
@@ -132,12 +164,19 @@ end
 
 function BackgammonGame(p0, p1, dice, remaining, cp, term, rew; obs_type::Symbol=:minimal_flat)
     history, actions_buf, src_buf1, src_buf2 = _create_game_buffers()
-    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, obs_type, actions_buf, false, src_buf1, src_buf2)
+    # Infer phase from dice: if dice are set, we're in checker play
+    phase = (dice[1] == 0 && dice[2] == 0) ? PHASE_CHANCE : PHASE_CHECKER_PLAY
+    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, obs_type,
+        Int16(1), Int8(0), phase, false, Int8(0), Int8(0), false, false, false,
+        actions_buf, false, src_buf1, src_buf2)
 end
 
 function BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history; obs_type::Symbol=:minimal_flat)
     _, actions_buf, src_buf1, src_buf2 = _create_game_buffers()
-    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, obs_type, actions_buf, false, src_buf1, src_buf2)
+    phase = (dice[1] == 0 && dice[2] == 0) ? PHASE_CHANCE : PHASE_CHECKER_PLAY
+    BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, obs_type,
+        Int16(1), Int8(0), phase, false, Int8(0), Int8(0), false, false, false,
+        actions_buf, false, src_buf1, src_buf2)
 end
 
 """
@@ -164,6 +203,8 @@ function clone(g::BackgammonGame)
         g.p0, g.p1, g.dice, g.remaining_actions,
         g.current_player, g.terminated, g.reward,
         history, g.doubles_only, g.obs_type,
+        g.cube_value, g.cube_owner, g.phase, g.cube_enabled,
+        g.my_away, g.opp_away, g.is_crawford, g.is_post_crawford, g.jacoby_enabled,
         actions_buf, false, src_buf1, src_buf2
     )
 end
@@ -186,7 +227,14 @@ function Base.:(==)(g1::BackgammonGame, g2::BackgammonGame)
            g1.current_player == g2.current_player &&
            g1.terminated == g2.terminated &&
            g1.reward == g2.reward &&
-           g1.doubles_only == g2.doubles_only
+           g1.doubles_only == g2.doubles_only &&
+           g1.cube_value == g2.cube_value &&
+           g1.cube_owner == g2.cube_owner &&
+           g1.phase == g2.phase &&
+           g1.cube_enabled == g2.cube_enabled &&
+           g1.my_away == g2.my_away &&
+           g1.opp_away == g2.opp_away &&
+           g1.is_crawford == g2.is_crawford
 end
 
 """
@@ -206,6 +254,13 @@ function Base.hash(g::BackgammonGame, h::UInt)
     h = hash(g.terminated, h)
     h = hash(g.reward, h)
     h = hash(g.doubles_only, h)
+    h = hash(g.cube_value, h)
+    h = hash(g.cube_owner, h)
+    h = hash(g.phase, h)
+    h = hash(g.cube_enabled, h)
+    h = hash(g.my_away, h)
+    h = hash(g.opp_away, h)
+    h = hash(g.is_crawford, h)
     return h
 end
 
@@ -310,6 +365,16 @@ function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing
     if obs_type !== nothing
         g.obs_type = obs_type
     end
+    # Reset cube/match state
+    g.cube_value = Int16(1)
+    g.cube_owner = Int8(0)
+    g.phase = PHASE_CHANCE
+    g.cube_enabled = false
+    g.my_away = Int8(0)
+    g.opp_away = Int8(0)
+    g.is_crawford = false
+    g.is_post_crawford = false
+    g.jacoby_enabled = false
     g._actions_cached = false  # Invalidate legal actions cache
     empty!(g.history)
     sizehint!(g.history, HISTORY_BUFFER_SIZE)
@@ -482,6 +547,15 @@ function initial_state(; first_player::Union{Nothing, Integer}=nothing,
         history,
         doubles_only,
         obs_type,
+        Int16(1),       # cube_value
+        Int8(0),        # cube_owner (centered)
+        PHASE_CHANCE,   # phase
+        false,          # cube_enabled
+        Int8(0),        # my_away (money play)
+        Int8(0),        # opp_away
+        false,          # is_crawford
+        false,          # is_post_crawford
+        false,          # jacoby_enabled
         actions_buf,
         false,  # _actions_cached
         src_buf1,
@@ -529,14 +603,15 @@ function switch_turn!(g::BackgammonGame)
     g.current_player = 1 - g.current_player
     g.dice = SVector{2, Int8}(0, 0)  # Zero dice indicates chance node (waiting for roll)
     g.remaining_actions = 1  # Placeholder; overwritten by apply_chance!
+    # If cube is available, go to cube decision first; otherwise straight to dice roll
+    g.phase = may_double(g) ? PHASE_CUBE_DECISION : PHASE_CHANCE
     g._actions_cached = false  # Invalidate cache (player changed)
 end
 
 # --- Chance / Stochastic Interface ---
 
 function is_chance_node(g::BackgammonGame)
-    # Check both dice for robustness against state corruption
-    return g.dice[1] == 0 && g.dice[2] == 0 && !g.terminated
+    return g.phase == PHASE_CHANCE && !g.terminated
 end
 
 # Precomputed standard chance outcomes (avoids allocation on each call)
@@ -568,6 +643,36 @@ function apply_action!(g::BackgammonGame, action_idx::Integer)
     if is_chance_node(g)
         error("Cannot apply deterministic action on a chance node. Use apply_chance! or sample_chance!")
     end
+
+    # --- Cube actions (677-680) ---
+    if is_cube_action(action_idx)
+        g._actions_cached = false
+        push!(g.history, Int(action_idx))
+        if action_idx == ACTION_CUBE_NO_DOUBLE
+            # Proceed to dice roll
+            g.phase = PHASE_CHANCE
+        elseif action_idx == ACTION_CUBE_DOUBLE
+            # Switch to opponent for take/pass response
+            g.current_player = 1 - g.current_player
+            g.phase = PHASE_CUBE_RESPONSE
+        elseif action_idx == ACTION_CUBE_TAKE
+            # Accept double: cube value doubles, taker owns cube
+            g.cube_value *= Int16(2)
+            g.cube_owner = Int8(1)  # Taker owns (from their perspective)
+            # Switch back to doubler for their turn
+            g.current_player = 1 - g.current_player
+            g.phase = PHASE_CHANCE
+        elseif action_idx == ACTION_CUBE_PASS
+            # Decline double: game ends, doubler wins current cube value
+            g.terminated = true
+            # Doubler = 1 - current_player (we switched player on DOUBLE)
+            doubler = 1 - g.current_player
+            g.reward = doubler == 0 ? Float32(g.cube_value) : Float32(-g.cube_value)
+        end
+        return
+    end
+
+    # --- Checker move actions (1-676) ---
 
     # Invalidate legal actions cache (state is about to change)
     g._actions_cached = false
@@ -653,6 +758,7 @@ function apply_chance!(g::BackgammonGame, outcome_idx::Integer)
     d1, d2 = DICE_OUTCOMES[outcome_idx]
     g.dice = SVector{2, Int8}(Int8(d1), Int8(d2))
     g.remaining_actions = (d1 == d2) ? 2 : 1
+    g.phase = PHASE_CHECKER_PLAY
     g._actions_cached = false  # Invalidate legal actions cache (new dice)
 end
 
@@ -759,6 +865,60 @@ Checks opponent's board state to determine scoring:
 end
 
 """
+    compute_game_reward(g::BackgammonGame, winner::Int8, base_multiplier::Float32) -> Float32
+
+Compute final reward from P0's perspective, accounting for cube value and match rules.
+
+- `winner`: 0 (P0 wins) or 1 (P1 wins)
+- `base_multiplier`: 1.0 (single), 2.0 (gammon), 3.0 (backgammon)
+
+**Jacoby rule**: In money play with `jacoby_enabled`, gammons/backgammons are
+reduced to singles if the cube has not been turned (`cube_value == 1`).
+"""
+function compute_game_reward(g::BackgammonGame, winner::Int8, base_multiplier::Float32)::Float32
+    multiplier = base_multiplier
+
+    # Jacoby rule: gammons/backgammons don't count unless cube was turned
+    if g.jacoby_enabled && g.my_away == Int8(0)  # Money play with Jacoby
+        if g.cube_value == Int16(1) && multiplier > 1.0f0
+            multiplier = 1.0f0
+        end
+    end
+
+    # Final points = base_multiplier * cube_value
+    points = multiplier * Float32(g.cube_value)
+
+    return winner == Int8(0) ? points : -points
+end
+
+"""
+    init_match_game!(g::BackgammonGame; my_score::Int=0, opp_score::Int=0,
+                     match_length::Int=0, is_crawford::Bool=false)
+
+Initialize a game within a match context. Sets away scores, Crawford flags,
+enables cube, and resets cube state.
+
+- `my_score`, `opp_score`: Current match scores
+- `match_length`: Points needed to win the match
+- `is_crawford`: Whether this is the Crawford game (no doubling allowed)
+
+Post-Crawford is inferred: if a player is 1-away and `is_crawford=false`,
+it's post-Crawford.
+"""
+function init_match_game!(g::BackgammonGame;
+                          my_score::Int=0, opp_score::Int=0,
+                          match_length::Int=0, is_crawford::Bool=false)
+    g.my_away = Int8(match_length - my_score)
+    g.opp_away = Int8(match_length - opp_score)
+    g.is_crawford = is_crawford
+    g.is_post_crawford = !is_crawford && (g.my_away == 1 || g.opp_away == 1)
+    g.jacoby_enabled = false  # Jacoby off in match play
+    g.cube_value = Int16(1)
+    g.cube_owner = Int8(0)
+    g.cube_enabled = !is_crawford  # No doubling in Crawford game
+end
+
+"""
     apply_single_move!(g::BackgammonGame, loc::Integer, die::Integer)
 
 Internal function to apply a single checker move and check for game termination.
@@ -784,14 +944,14 @@ function apply_single_move!(g::BackgammonGame, loc::Integer, die::Integer)
     if cp == 0
         if get_count(g.p0, IDX_P0_OFF) == MAX_CHECKERS
             g.terminated = true
-            # P0 wins: P0's home board is physical 19-24
-            g.reward = _compute_win_multiplier(g.p1, IDX_P1_OFF, IDX_P1_BAR, 19:24)
+            base_mult = _compute_win_multiplier(g.p1, IDX_P1_OFF, IDX_P1_BAR, 19:24)
+            g.reward = compute_game_reward(g, Int8(0), base_mult)
         end
     else
         if get_count(g.p1, IDX_P1_OFF) == MAX_CHECKERS
             g.terminated = true
-            # P1 wins: P1's home board is physical 1-6
-            g.reward = -_compute_win_multiplier(g.p0, IDX_P0_OFF, IDX_P0_BAR, 1:6)
+            base_mult = _compute_win_multiplier(g.p0, IDX_P0_OFF, IDX_P0_BAR, 1:6)
+            g.reward = compute_game_reward(g, Int8(1), base_mult)
         end
     end
 end

@@ -204,6 +204,7 @@ end
         # Manually apply chance (simulating apply_chance! behavior)
         g.dice = SVector{2, Int8}(1, 2)
         g.remaining_actions = 1
+        g.phase = BackgammonNet.PHASE_CHECKER_PLAY
         @test !is_chance_node(g)
         actions = legal_actions(g)
         pass_pass = BackgammonNet.encode_action(PASS, PASS)
@@ -1257,6 +1258,7 @@ end
         g_init = initial_state(first_player=0)
         g_init.dice = SVector{2, Int8}(4, 4)
         g_init.remaining_actions = Int8(2)
+        g_init.phase = BackgammonNet.PHASE_CHECKER_PLAY
         obs_doubles = observe_minimal(g_init)
 
         # Both slots show value 4
@@ -1272,6 +1274,7 @@ end
         g_second = initial_state(first_player=0)
         g_second.dice = SVector{2, Int8}(4, 4)
         g_second.remaining_actions = Int8(1)
+        g_second.phase = BackgammonNet.PHASE_CHECKER_PLAY
         obs_second = observe_minimal(g_second)
         @test obs_second[16, 1, 1] == 1.0f0  # Still show dice
         @test obs_second[22, 1, 1] == 1.0f0
@@ -1293,6 +1296,7 @@ end
         g_4dice = initial_state(first_player=0)
         g_4dice.dice = SVector{2, Int8}(3, 3)
         g_4dice.remaining_actions = Int8(2)
+        g_4dice.phase = BackgammonNet.PHASE_CHECKER_PLAY
         obs_4 = observe_minimal(g_4dice)
         @test obs_4[28, 1, 1] == 1.0f0  # Bin 4 active
 
@@ -2933,6 +2937,361 @@ end
                 @test BackgammonNet.has_checkers(UInt128(1) << (idx << 2), BackgammonNet.MASKS_HIGHER_P1[1])
             end
             @test !BackgammonNet.has_checkers(UInt128(1) << (1 << 2), BackgammonNet.MASKS_HIGHER_P1[1])
+        end
+    end
+
+    # ========================================================================
+    # Cube, Match Play, and Context Observations
+    # ========================================================================
+
+    @testset "Cube State Initialization" begin
+        g = initial_state()
+        @test g.cube_value == Int16(1)
+        @test g.cube_owner == Int8(0)
+        @test g.cube_enabled == false
+        @test g.phase == BackgammonNet.PHASE_CHANCE
+        @test g.my_away == Int8(0)
+        @test g.opp_away == Int8(0)
+        @test g.is_crawford == false
+        @test g.is_post_crawford == false
+        @test g.jacoby_enabled == false
+    end
+
+    @testset "may_double Edge Cases" begin
+        g = initial_state()
+
+        # Default: cube disabled
+        @test BackgammonNet.may_double(g) == false
+
+        # Enable cube
+        g.cube_enabled = true
+        @test BackgammonNet.may_double(g) == true
+
+        # Cube owned by opponent (cube_owner == -1)
+        g.cube_owner = Int8(-1)
+        @test BackgammonNet.may_double(g) == false
+
+        # Cube owned by current player
+        g.cube_owner = Int8(1)
+        @test BackgammonNet.may_double(g) == true
+
+        # Centered cube
+        g.cube_owner = Int8(0)
+        @test BackgammonNet.may_double(g) == true
+
+        # Crawford game
+        g.is_crawford = true
+        @test BackgammonNet.may_double(g) == false
+
+        # Terminated game
+        g.is_crawford = false
+        g.terminated = true
+        @test BackgammonNet.may_double(g) == false
+    end
+
+    @testset "Cube Action Constants" begin
+        @test BackgammonNet.ACTION_CUBE_NO_DOUBLE == 677
+        @test BackgammonNet.ACTION_CUBE_DOUBLE == 678
+        @test BackgammonNet.ACTION_CUBE_TAKE == 679
+        @test BackgammonNet.ACTION_CUBE_PASS == 680
+        @test BackgammonNet.MAX_ACTIONS == 680
+
+        @test BackgammonNet.is_cube_action(677) == true
+        @test BackgammonNet.is_cube_action(680) == true
+        @test BackgammonNet.is_cube_action(676) == false
+        @test BackgammonNet.is_cube_action(1) == false
+    end
+
+    @testset "Cube Decision Legal Actions" begin
+        g = initial_state(first_player=0)
+        g.cube_enabled = true
+        g.phase = BackgammonNet.PHASE_CUBE_DECISION
+
+        actions = legal_actions(g)
+        @test actions == [677, 678]
+        @test is_action_valid(g, 677) == true
+        @test is_action_valid(g, 678) == true
+        @test is_action_valid(g, 679) == false
+        @test is_action_valid(g, 680) == false
+        @test is_action_valid(g, 1) == false
+    end
+
+    @testset "Cube Response Legal Actions" begin
+        g = initial_state(first_player=0)
+        g.cube_enabled = true
+        g.phase = BackgammonNet.PHASE_CUBE_RESPONSE
+
+        actions = legal_actions(g)
+        @test actions == [679, 680]
+        @test is_action_valid(g, 679) == true
+        @test is_action_valid(g, 680) == true
+        @test is_action_valid(g, 677) == false
+        @test is_action_valid(g, 678) == false
+    end
+
+    @testset "Cube Action Flow: NO_DOUBLE" begin
+        g = initial_state(first_player=0)
+        g.cube_enabled = true
+        sample_chance!(g)
+
+        # Play moves until cube decision
+        while g.phase == BackgammonNet.PHASE_CHECKER_PLAY && !game_terminated(g)
+            actions = legal_actions(g)
+            apply_action!(g, actions[1])
+        end
+
+        if g.phase == BackgammonNet.PHASE_CUBE_DECISION
+            old_player = g.current_player
+            apply_action!(g, 677)  # NO_DOUBLE
+            @test g.phase == BackgammonNet.PHASE_CHANCE
+            @test g.cube_value == Int16(1)
+            @test is_chance_node(g)
+        end
+    end
+
+    @testset "Cube Action Flow: DOUBLE -> TAKE" begin
+        g = initial_state(first_player=0)
+        g.cube_enabled = true
+        sample_chance!(g)
+
+        while g.phase == BackgammonNet.PHASE_CHECKER_PLAY && !game_terminated(g)
+            actions = legal_actions(g)
+            apply_action!(g, actions[1])
+        end
+
+        if g.phase == BackgammonNet.PHASE_CUBE_DECISION
+            doubler = g.current_player
+            apply_action!(g, 678)  # DOUBLE
+            @test g.phase == BackgammonNet.PHASE_CUBE_RESPONSE
+            @test g.current_player == 1 - doubler
+
+            apply_action!(g, 679)  # TAKE
+            @test g.cube_value == Int16(2)
+            @test g.cube_owner == Int8(1)
+            @test g.phase == BackgammonNet.PHASE_CHANCE
+            @test g.current_player == doubler  # Switched back
+            @test !game_terminated(g)
+        end
+    end
+
+    @testset "Cube Action Flow: DOUBLE -> PASS" begin
+        g = initial_state(first_player=0)
+        g.cube_enabled = true
+        sample_chance!(g)
+
+        while g.phase == BackgammonNet.PHASE_CHECKER_PLAY && !game_terminated(g)
+            actions = legal_actions(g)
+            apply_action!(g, actions[1])
+        end
+
+        if g.phase == BackgammonNet.PHASE_CUBE_DECISION
+            doubler = g.current_player
+            apply_action!(g, 678)  # DOUBLE
+            apply_action!(g, 680)  # PASS
+
+            @test game_terminated(g)
+            # Reward: doubler wins 1 point (cube was 1 at time of pass)
+            expected_reward = doubler == 0 ? 1.0f0 : -1.0f0
+            @test g.reward == expected_reward
+        end
+    end
+
+    @testset "Cube Re-double" begin
+        g = initial_state(first_player=0)
+        g.cube_enabled = true
+        g.cube_value = Int16(2)
+        g.cube_owner = Int8(1)  # Current player owns cube
+        g.phase = BackgammonNet.PHASE_CUBE_DECISION
+
+        # Can double since owner == +1
+        @test BackgammonNet.may_double(g) == true
+
+        apply_action!(g, 678)  # DOUBLE
+        @test g.phase == BackgammonNet.PHASE_CUBE_RESPONSE
+        apply_action!(g, 679)  # TAKE
+        @test g.cube_value == Int16(4)
+        @test g.cube_owner == Int8(1)  # Taker now owns cube
+    end
+
+    @testset "step! with Cube Actions" begin
+        g = initial_state(first_player=0)
+        g.cube_enabled = true
+        sample_chance!(g)
+
+        while g.phase == BackgammonNet.PHASE_CHECKER_PLAY && !game_terminated(g)
+            actions = legal_actions(g)
+            apply_action!(g, actions[1])
+        end
+
+        if g.phase == BackgammonNet.PHASE_CUBE_DECISION
+            # step! with DOUBLE should return CUBE_RESPONSE state
+            g2 = clone(g)
+            step!(g2, 678)
+            @test g2.phase == BackgammonNet.PHASE_CUBE_RESPONSE
+            @test !is_chance_node(g2)
+
+            # step! with DOUBLE -> TAKE should return playable state
+            g3 = clone(g2)
+            step!(g3, 679)
+            @test g3.cube_value == Int16(2)
+            @test !is_chance_node(g3)
+            @test !game_terminated(g3)
+
+            # step! with NO_DOUBLE should return playable state
+            g4 = clone(g)
+            step!(g4, 677)
+            @test !is_chance_node(g4)
+            @test !game_terminated(g4)
+        end
+    end
+
+    @testset "Full Random Games with Cube" begin
+        for _ in 1:100
+            g = initial_state()
+            g.cube_enabled = true
+            sample_chance!(g)
+            steps = 0
+            while !game_terminated(g)
+                steps += 1
+                @test steps <= 5000
+                if steps > 5000; break; end
+                actions = legal_actions(g)
+                step!(g, actions[rand(1:length(actions))])
+            end
+        end
+    end
+
+    @testset "compute_game_reward" begin
+        g = initial_state()
+
+        # Basic rewards (cube=1, no Jacoby)
+        @test BackgammonNet.compute_game_reward(g, Int8(0), 1.0f0) == 1.0f0
+        @test BackgammonNet.compute_game_reward(g, Int8(0), 2.0f0) == 2.0f0
+        @test BackgammonNet.compute_game_reward(g, Int8(1), 1.0f0) == -1.0f0
+        @test BackgammonNet.compute_game_reward(g, Int8(1), 3.0f0) == -3.0f0
+
+        # Cube multiplication
+        g.cube_value = Int16(4)
+        @test BackgammonNet.compute_game_reward(g, Int8(0), 2.0f0) == 8.0f0
+        @test BackgammonNet.compute_game_reward(g, Int8(1), 3.0f0) == -12.0f0
+
+        # Jacoby rule: cube not turned
+        g2 = initial_state()
+        g2.jacoby_enabled = true
+        @test BackgammonNet.compute_game_reward(g2, Int8(0), 2.0f0) == 1.0f0  # Reduced
+        @test BackgammonNet.compute_game_reward(g2, Int8(0), 3.0f0) == 1.0f0  # Reduced
+        @test BackgammonNet.compute_game_reward(g2, Int8(0), 1.0f0) == 1.0f0  # Single stays
+
+        # Jacoby rule: cube turned
+        g2.cube_value = Int16(2)
+        @test BackgammonNet.compute_game_reward(g2, Int8(0), 2.0f0) == 4.0f0  # Not reduced
+
+        # Jacoby disabled in match play
+        g3 = initial_state()
+        g3.jacoby_enabled = true
+        g3.my_away = Int8(5)
+        @test BackgammonNet.compute_game_reward(g3, Int8(0), 2.0f0) == 2.0f0
+    end
+
+    @testset "init_match_game!" begin
+        # Crawford game
+        g = initial_state()
+        BackgammonNet.init_match_game!(g, my_score=4, opp_score=2, match_length=5, is_crawford=true)
+        @test g.my_away == Int8(1)
+        @test g.opp_away == Int8(3)
+        @test g.is_crawford == true
+        @test g.is_post_crawford == false
+        @test g.cube_enabled == false
+        @test BackgammonNet.may_double(g) == false
+
+        # Post-Crawford
+        g2 = initial_state()
+        BackgammonNet.init_match_game!(g2, my_score=4, opp_score=2, match_length=5, is_crawford=false)
+        @test g2.is_crawford == false
+        @test g2.is_post_crawford == true
+        @test g2.cube_enabled == true
+
+        # Normal match
+        g3 = initial_state()
+        BackgammonNet.init_match_game!(g3, my_score=1, opp_score=2, match_length=7)
+        @test g3.my_away == Int8(6)
+        @test g3.opp_away == Int8(5)
+        @test g3.is_crawford == false
+        @test g3.is_post_crawford == false
+        @test g3.cube_enabled == true
+        @test g3.jacoby_enabled == false
+    end
+
+    @testset "Full Random Match Games" begin
+        for _ in 1:50
+            g = initial_state()
+            BackgammonNet.init_match_game!(g,
+                my_score=rand(0:4), opp_score=rand(0:4),
+                match_length=5, is_crawford=rand(Bool))
+            sample_chance!(g)
+            steps = 0
+            while !game_terminated(g)
+                steps += 1
+                @test steps <= 5000
+                if steps > 5000; break; end
+                actions = legal_actions(g)
+                step!(g, actions[rand(1:length(actions))])
+            end
+        end
+    end
+
+    @testset "Context Observations" begin
+        g = initial_state()
+        ctx = BackgammonNet.context_observation(g)
+        @test length(ctx) == BackgammonNet.CONTEXT_DIM
+        @test ctx[1] == 0.0f0  # cube=1 -> log2(1)/6=0
+        @test ctx[2] == 0.0f0  # cube_owner=centered
+        @test ctx[3] == 0.0f0  # may_double=false (cube disabled)
+        @test ctx[4] == 1.0f0  # is_money=true
+
+        # Cube enabled, cube decision phase
+        g2 = initial_state()
+        g2.cube_enabled = true
+        g2.phase = BackgammonNet.PHASE_CUBE_DECISION
+        ctx2 = BackgammonNet.context_observation(g2)
+        @test ctx2[3] == 1.0f0  # may_double=true
+        @test ctx2[10] == 1.0f0  # CUBE_DECISION
+        @test ctx2[11] == 0.0f0
+        @test ctx2[12] == 0.0f0
+
+        # Match play context
+        g3 = initial_state()
+        BackgammonNet.init_match_game!(g3, my_score=2, opp_score=3, match_length=7)
+        ctx3 = BackgammonNet.context_observation(g3)
+        @test ctx3[4] == 0.0f0  # not money play
+        @test ctx3[5] ≈ 5.0f0 / 5.0f0  # my_away=5, max=5
+        @test ctx3[6] ≈ 4.0f0 / 5.0f0  # opp_away=4
+
+        # Masked context
+        ctx_masked = BackgammonNet.context_observation(g3, true)
+        @test all(ctx_masked .== 0.0f0)
+        ctx_full = BackgammonNet.context_observation(g3, false)
+        @test ctx_full == ctx3
+    end
+
+    @testset "Backward Compatibility - Non-Cube Games" begin
+        # Default games should work exactly as before
+        for _ in 1:100
+            g = initial_state()
+            @test g.cube_enabled == false
+            sample_chance!(g)
+            steps = 0
+            while !game_terminated(g)
+                steps += 1
+                @test steps <= 5000
+                if steps > 5000; break; end
+                actions = legal_actions(g)
+                # No cube actions should appear
+                for a in actions
+                    @test !BackgammonNet.is_cube_action(a)
+                end
+                step!(g, actions[rand(1:length(actions))])
+            end
         end
     end
 

@@ -4,10 +4,16 @@ version = "0.3.2"
 authors = ["sile16@gmail.com"]
 
 [deps]
+ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
+ArgParse = "1.2.0"
+JSON = "1.4.0"
+ProgressMeter = "1.11.0"
 PyCall = "1.96.4"
 StaticArrays = "1"
 julia = "1.9"
