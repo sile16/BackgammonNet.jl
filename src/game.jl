@@ -89,7 +89,7 @@ Mutable game state for backgammon, using bitboard representation.
 
 # Cube State
 - `cube_value::Int16`: Current cube value (1, 2, 4, 8, ...)
-- `cube_owner::Int8`: Cube ownership (-1=opponent, 0=centered, +1=current player)
+- `cube_owner::Int8`: Cube ownership (-1=centered, 0=player 0 owns, 1=player 1 owns)
 - `phase::GamePhase`: Current game phase (CHANCE, CUBE_DECISION, CUBE_RESPONSE, CHECKER_PLAY)
 
 # Match State (my_away=0 and opp_away=0 means money play)
@@ -117,7 +117,7 @@ mutable struct BackgammonGame
     obs_type::Symbol   # Observation type: :minimal, :full, :biased, :minimal_flat, :full_flat, :biased_flat
     # Cube state
     cube_value::Int16
-    cube_owner::Int8       # -1=opponent, 0=centered, +1=current player
+    cube_owner::Int8       # -1=centered, 0=player 0 owns, 1=player 1 owns
     phase::GamePhase
     cube_enabled::Bool     # Whether cube decisions are active (false = money play without cube)
     # Match state (0/0 = money play)
@@ -167,7 +167,7 @@ function BackgammonGame(p0, p1, dice, remaining, cp, term, rew; obs_type::Symbol
     # Infer phase from dice: if dice are set, we're in checker play
     phase = (dice[1] == 0 && dice[2] == 0) ? PHASE_CHANCE : PHASE_CHECKER_PLAY
     BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, obs_type,
-        Int16(1), Int8(0), phase, false, Int8(0), Int8(0), false, false, false,
+        Int16(1), Int8(-1), phase, false, Int8(0), Int8(0), false, false, false,
         actions_buf, false, src_buf1, src_buf2)
 end
 
@@ -175,7 +175,7 @@ function BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history; obs_typ
     _, actions_buf, src_buf1, src_buf2 = _create_game_buffers()
     phase = (dice[1] == 0 && dice[2] == 0) ? PHASE_CHANCE : PHASE_CHECKER_PLAY
     BackgammonGame(p0, p1, dice, remaining, cp, term, rew, history, false, obs_type,
-        Int16(1), Int8(0), phase, false, Int8(0), Int8(0), false, false, false,
+        Int16(1), Int8(-1), phase, false, Int8(0), Int8(0), false, false, false,
         actions_buf, false, src_buf1, src_buf2)
 end
 
@@ -367,7 +367,7 @@ function reset!(g::BackgammonGame; first_player::Union{Nothing, Integer}=nothing
     end
     # Reset cube/match state
     g.cube_value = Int16(1)
-    g.cube_owner = Int8(0)
+    g.cube_owner = Int8(-1)
     g.phase = PHASE_CHANCE
     g.cube_enabled = false
     g.my_away = Int8(0)
@@ -548,7 +548,7 @@ function initial_state(; first_player::Union{Nothing, Integer}=nothing,
         doubles_only,
         obs_type,
         Int16(1),       # cube_value
-        Int8(0),        # cube_owner (centered)
+        Int8(-1),       # cube_owner (centered)
         PHASE_CHANCE,   # phase
         false,          # cube_enabled
         Int8(0),        # my_away (money play)
@@ -658,7 +658,7 @@ function apply_action!(g::BackgammonGame, action_idx::Integer)
         elseif action_idx == ACTION_CUBE_TAKE
             # Accept double: cube value doubles, taker owns cube
             g.cube_value *= Int16(2)
-            g.cube_owner = Int8(1)  # Taker owns (from their perspective)
+            g.cube_owner = g.current_player  # Taker (absolute player ID) owns
             # Switch back to doubler for their turn
             g.current_player = 1 - g.current_player
             g.phase = PHASE_CHANCE
@@ -914,7 +914,7 @@ function init_match_game!(g::BackgammonGame;
     g.is_post_crawford = !is_crawford && (g.my_away == 1 || g.opp_away == 1)
     g.jacoby_enabled = false  # Jacoby off in match play
     g.cube_value = Int16(1)
-    g.cube_owner = Int8(0)
+    g.cube_owner = Int8(-1)
     g.cube_enabled = !is_crawford  # No doubling in Crawford game
 end
 

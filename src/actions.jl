@@ -19,13 +19,19 @@ const MAX_ACTIONS            = 680
     may_double(g::BackgammonGame) -> Bool
 
 Check if the current player is allowed to offer a double.
-Returns false during Crawford games, when opponent owns the cube, or when terminated.
+Returns false during Crawford games, when the other player owns the cube, or when terminated.
+
+Cube ownership uses absolute player IDs:
+- `-1` = centered (both can double)
+- `0` = player 0 owns (only P0 can double)
+- `1` = player 1 owns (only P1 can double)
 """
 @inline function may_double(g::BackgammonGame)::Bool
     g.cube_enabled || return false
     g.is_crawford && return false
     g.terminated && return false
-    g.cube_owner == Int8(-1) && return false
+    # Centered (-1): anyone can double. Otherwise only the owner.
+    g.cube_owner >= Int8(0) && g.cube_owner != g.current_player && return false
     return true
 end
 

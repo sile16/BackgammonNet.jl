@@ -2947,7 +2947,7 @@ end
     @testset "Cube State Initialization" begin
         g = initial_state()
         @test g.cube_value == Int16(1)
-        @test g.cube_owner == Int8(0)
+        @test g.cube_owner == Int8(-1)
         @test g.cube_enabled == false
         @test g.phase == BackgammonNet.PHASE_CHANCE
         @test g.my_away == Int8(0)
@@ -2967,16 +2967,16 @@ end
         g.cube_enabled = true
         @test BackgammonNet.may_double(g) == true
 
-        # Cube owned by opponent (cube_owner == -1)
-        g.cube_owner = Int8(-1)
+        # Cube owned by opponent (other player owns)
+        g.cube_owner = Int8(1 - g.current_player)
         @test BackgammonNet.may_double(g) == false
 
         # Cube owned by current player
-        g.cube_owner = Int8(1)
+        g.cube_owner = g.current_player
         @test BackgammonNet.may_double(g) == true
 
         # Centered cube
-        g.cube_owner = Int8(0)
+        g.cube_owner = Int8(-1)
         @test BackgammonNet.may_double(g) == true
 
         # Crawford game
@@ -3065,9 +3065,10 @@ end
             @test g.phase == BackgammonNet.PHASE_CUBE_RESPONSE
             @test g.current_player == 1 - doubler
 
+            taker = g.current_player  # Taker is current player before TAKE
             apply_action!(g, 679)  # TAKE
             @test g.cube_value == Int16(2)
-            @test g.cube_owner == Int8(1)
+            @test g.cube_owner == taker  # Taker owns (absolute player ID)
             @test g.phase == BackgammonNet.PHASE_CHANCE
             @test g.current_player == doubler  # Switched back
             @test !game_terminated(g)
@@ -3100,17 +3101,17 @@ end
         g = initial_state(first_player=0)
         g.cube_enabled = true
         g.cube_value = Int16(2)
-        g.cube_owner = Int8(1)  # Current player owns cube
+        g.cube_owner = Int8(0)  # Player 0 owns cube (absolute)
         g.phase = BackgammonNet.PHASE_CUBE_DECISION
 
-        # Can double since owner == +1
+        # Can double since P0 owns and P0 is current player
         @test BackgammonNet.may_double(g) == true
 
-        apply_action!(g, 678)  # DOUBLE
+        apply_action!(g, 678)  # DOUBLE (P0 doubles, switches to P1)
         @test g.phase == BackgammonNet.PHASE_CUBE_RESPONSE
-        apply_action!(g, 679)  # TAKE
+        apply_action!(g, 679)  # TAKE (P1 takes, cube_owner = P1 = 1)
         @test g.cube_value == Int16(4)
-        @test g.cube_owner == Int8(1)  # Taker now owns cube
+        @test g.cube_owner == Int8(1)  # P1 (taker) now owns cube
     end
 
     @testset "step! with Cube Actions" begin
@@ -3251,7 +3252,7 @@ end
         @test obs[33, 1, 1] == 0.0f0  # Not CHECKER_PLAY (CHANCE phase)
         # Channel 34: cube_value = log2(1)/6 = 0
         @test obs[34, 1, 1] == 0.0f0
-        # Channel 35-36: cube_owner = 0 (centered)
+        # Channel 35-36: cube_owner = -1 (centered)
         @test obs[35, 1, 1] == 0.0f0  # Not "I own"
         @test obs[36, 1, 1] == 1.0f0  # Centered
         # Channel 37: may_double = false (cube disabled)
@@ -3288,8 +3289,8 @@ end
         obs4 = observe_minimal(g4)
         @test obs4[34, 1, 1] ≈ log2(4.0f0) / 6.0f0
 
-        # Cube owner = +1 (I own)
-        g4.cube_owner = Int8(1)
+        # Cube owner = current player (I own)
+        g4.cube_owner = g4.current_player
         obs4b = observe_minimal(g4)
         @test obs4b[35, 1, 1] == 1.0f0  # I own
         @test obs4b[36, 1, 1] == 0.0f0  # Not centered

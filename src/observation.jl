@@ -74,8 +74,8 @@ const BAR_PIP_VALUE = 25          # Pip value for checkers on bar
 #   32:    Phase: CUBE_RESPONSE (1.0 if active)
 #   33:    Phase: CHECKER_PLAY (1.0 if active)
 #   34:    Cube value: log2(cube_value) / 6.0
-#   35:    I own cube (cube_owner == +1)
-#   36:    Cube centered (cube_owner == 0)
+#   35:    I own cube (cube_owner == current_player)
+#   36:    Cube centered (cube_owner == -1)
 #   37:    Can double (may_double)
 #   38:    Money play (1.0 if no match)
 #   39:    My away score (/25)
@@ -511,9 +511,9 @@ function _encode_cube_match!(obs::AbstractArray{Float32,3}, g::BackgammonGame)
     end
 
     # Cube ownership (channels 35-36)
-    if g.cube_owner == Int8(1)
+    if g.cube_owner >= Int8(0) && g.cube_owner == g.current_player
         @inbounds for w in 1:OBS_WIDTH; obs[35, 1, w] = 1.0f0; end
-    elseif g.cube_owner == Int8(0)
+    elseif g.cube_owner == Int8(-1)
         @inbounds for w in 1:OBS_WIDTH; obs[36, 1, w] = 1.0f0; end
     end
 
@@ -1134,8 +1134,8 @@ function _encode_cube_match_flat!(obs::AbstractVector{Float32}, g::BackgammonGam
         obs[offset + 2]  = g.phase == PHASE_CUBE_RESPONSE ? 1.0f0 : 0.0f0
         obs[offset + 3]  = g.phase == PHASE_CHECKER_PLAY  ? 1.0f0 : 0.0f0
         obs[offset + 4]  = log2(Float32(g.cube_value)) / CUBE_NORM
-        obs[offset + 5]  = Float32(g.cube_owner == Int8(1))
-        obs[offset + 6]  = Float32(g.cube_owner == Int8(0))
+        obs[offset + 5]  = Float32(g.cube_owner >= Int8(0) && g.cube_owner == g.current_player)
+        obs[offset + 6]  = Float32(g.cube_owner == Int8(-1))
         obs[offset + 7]  = may_double(g) ? 1.0f0 : 0.0f0
         obs[offset + 8]  = (g.my_away == Int8(0) && g.opp_away == Int8(0)) ? 1.0f0 : 0.0f0
         obs[offset + 9]  = Float32(g.my_away) / MATCH_NORM
@@ -1456,8 +1456,8 @@ function _encode_globals_minimal!(globals::AbstractVector{Float32}, g::Backgammo
         # Cube value
         globals[idx + 4] = log2(Float32(g.cube_value)) / CUBE_NORM
         # Cube ownership
-        globals[idx + 5] = Float32(g.cube_owner == Int8(1))
-        globals[idx + 6] = Float32(g.cube_owner == Int8(0))
+        globals[idx + 5] = Float32(g.cube_owner >= Int8(0) && g.cube_owner == g.current_player)
+        globals[idx + 6] = Float32(g.cube_owner == Int8(-1))
         # Can double
         globals[idx + 7] = may_double(g) ? 1.0f0 : 0.0f0
         # Money play
@@ -1766,7 +1766,9 @@ function context_observation(g::BackgammonGame)::Vector{Float32}
 
     # Cube state
     ctx[1] = log2(Float32(g.cube_value)) / 6.0f0
-    ctx[2] = Float32(g.cube_owner)
+    # Cube owner relative to current player: -1=opponent, 0=centered, +1=I own
+    ctx[2] = g.cube_owner == Int8(-1) ? 0.0f0 :
+             g.cube_owner == g.current_player ? 1.0f0 : -1.0f0
     ctx[3] = may_double(g) ? 1.0f0 : 0.0f0
 
     # Match state

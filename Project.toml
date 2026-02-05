@@ -1,12 +1,13 @@
 name = "BackgammonNet"
 uuid = "11d55574-5027-10f8-1967-3b41d663c34d"
-version = "0.3.2"
+version = "0.4.0"
 authors = ["sile16@gmail.com"]
 
 [deps]
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
+PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
