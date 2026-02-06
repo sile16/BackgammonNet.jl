@@ -133,7 +133,7 @@ ctx = context_observation(g)
 
 ### Initialization Options
 - `first_player`: Set to `0` or `1` to choose starting player, or `nothing` for random.
-- `short_game`: When `true`, uses a modified board position with pieces closer to bearing off (faster games for training).
+- `short_game`: When `true`, uses a symmetric board position with 113 pips per player (45.7% shorter than standard 208 pips) for faster games.
 - `doubles_only`: When `true`, all dice rolls are doubles (1-1 through 6-6 with uniform probability).
 
 ## Performance

@@ -4,6 +4,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## Release Notes - v0.4.1
+
+### Bug Fixes
+- **Fixed asymmetric `short_game` position**: The pgx-derived `short_game` starting position was asymmetric (P0: 237 pips, P1: 267 pips), giving P0 a 30-pip advantage. Replaced with a symmetric position where both players have 113 pips (45.7% shorter than standard 208 pips).
+
+### Short Game Position
+```
+Array: [1, 3, 0, -2, 3, 0, 3, 2, 0, 0, 0, 1, -1, 0, 0, 0, -2, -3, 0, -3, 2, 0, -3, -1]
+
+P1 HOME                                           P0 HOME
+┌─────────────────────────────────────────────────────────┐
+│ P1:1   .    .    .  P1:2 P1:3 │   .  P1:3 P0:2   .  P1:3 P1:1 │
+│  13   14   15   16   17   18 │  19   20   21   22   23   24 │
+│                              │                              │
+│             BAR              │                              │
+│                              │                              │
+│  12   11   10    9    8    7 │   6    5    4    3    2    1 │
+│ P0:1   .    .    .  P0:2 P0:3 │   .  P0:3 P1:2   .  P0:3 P0:1 │
+└─────────────────────────────────────────────────────────┘
+P0 HOME                                           P1 HOME
+
+P0: 1@1, 3@2, 3@5, 3@7, 2@8, 1@12, 2@21 (15 checkers, 113 pips)
+P1: 2@4, 1@13, 2@17, 3@18, 3@20, 3@23, 1@24 (15 checkers, 113 pips)
+```
+
+---
+
 ## Release Notes - v0.4.0
 
 ### Breaking Changes
