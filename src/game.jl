@@ -48,13 +48,14 @@ const INIT_P0_STANDARD = (UInt128(2) << (1<<2)) | (UInt128(5) << (12<<2)) | (UIn
 const INIT_P1_STANDARD = (UInt128(5) << (6<<2)) | (UInt128(3) << (8<<2)) | (UInt128(5) << (13<<2)) | (UInt128(2) << (24<<2))
 
 # --- Short Game Initial Board Position ---
-# From pgx: [0, -1, -3, 0, 2, -3, 0, -3, -2, 0, 0, -1, 1, 0, 0, 2, 3, 0, 3, -2, 0, 3, 1, 0, 0, 0, 0, 0]
-# P0: 2 on 4, 1 on 12, 2 on 15, 3 on 16, 3 on 18, 3 on 21, 1 on 22
-const INIT_P0_SHORT = (UInt128(2) << (4<<2)) | (UInt128(1) << (12<<2)) | (UInt128(2) << (15<<2)) |
-                      (UInt128(3) << (16<<2)) | (UInt128(3) << (18<<2)) | (UInt128(3) << (21<<2)) | (UInt128(1) << (22<<2))
-# P1: 1 on 1, 3 on 2, 3 on 5, 3 on 7, 2 on 8, 1 on 11, 2 on 19
-const INIT_P1_SHORT = (UInt128(1) << (1<<2)) | (UInt128(3) << (2<<2)) | (UInt128(3) << (5<<2)) |
-                      (UInt128(3) << (7<<2)) | (UInt128(2) << (8<<2)) | (UInt128(1) << (11<<2)) | (UInt128(2) << (19<<2))
+# Symmetric position with 113 pips each (45.7% shorter than standard 208 pips)
+# Array format: [1, 3, 0, -2, 3, 0, 3, 2, 0, 0, 0, 1, -1, 0, 0, 0, -2, -3, 0, -3, 2, 0, -3, -1]
+# P0: 1 on 1, 3 on 2, 3 on 5, 3 on 7, 2 on 8, 1 on 12, 2 on 21
+const INIT_P0_SHORT = (UInt128(1) << (1<<2)) | (UInt128(3) << (2<<2)) | (UInt128(3) << (5<<2)) |
+                      (UInt128(3) << (7<<2)) | (UInt128(2) << (8<<2)) | (UInt128(1) << (12<<2)) | (UInt128(2) << (21<<2))
+# P1: 2 on 4, 1 on 13, 2 on 17, 3 on 18, 3 on 20, 3 on 23, 1 on 24
+const INIT_P1_SHORT = (UInt128(2) << (4<<2)) | (UInt128(1) << (13<<2)) | (UInt128(2) << (17<<2)) |
+                      (UInt128(3) << (18<<2)) | (UInt128(3) << (20<<2)) | (UInt128(3) << (23<<2)) | (UInt128(1) << (24<<2))
 
 # --- Buffer Size Constants ---
 const ACTIONS_BUFFER_SIZE = 200     # Max legal actions in any position

@@ -948,32 +948,33 @@ end
         @test is_chance_node(g)
 
         # Verify short game board position for P0 (from canonical perspective)
-        # P0 at indices: 4(2), 12(1), 15(2), 16(3), 18(3), 21(3), 22(1)
+        # Symmetric position: [1, 3, 0, -2, 3, 0, 3, 2, 0, 0, 0, 1, -1, 0, 0, 0, -2, -3, 0, -3, 2, 0, -3, -1]
+        # P0 at indices: 1(1), 2(3), 5(3), 7(3), 8(2), 12(1), 21(2)
         sample_chance!(g)
-        @test g[4] == 2   # P0 has 2 on point 4
+        @test g[1] == 1   # P0 has 1 on point 1
+        @test g[2] == 3   # P0 has 3 on point 2
+        @test g[5] == 3   # P0 has 3 on point 5
+        @test g[7] == 3   # P0 has 3 on point 7
+        @test g[8] == 2   # P0 has 2 on point 8
         @test g[12] == 1  # P0 has 1 on point 12
-        @test g[15] == 2  # P0 has 2 on point 15
-        @test g[16] == 3  # P0 has 3 on point 16
-        @test g[18] == 3  # P0 has 3 on point 18
-        @test g[21] == 3  # P0 has 3 on point 21
-        @test g[22] == 1  # P0 has 1 on point 22
+        @test g[21] == 2  # P0 has 2 on point 21
 
         # Verify P1 positions (negative from P0 perspective)
-        # P1 at indices: 1(1), 2(3), 5(3), 7(3), 8(2), 11(1), 19(2)
-        @test g[1] == -1  # P1 has 1 on point 1
-        @test g[2] == -3  # P1 has 3 on point 2
-        @test g[5] == -3  # P1 has 3 on point 5
-        @test g[7] == -3  # P1 has 3 on point 7
-        @test g[8] == -2  # P1 has 2 on point 8
-        @test g[11] == -1 # P1 has 1 on point 11
-        @test g[19] == -2 # P1 has 2 on point 19
+        # P1 at indices: 4(2), 13(1), 17(2), 18(3), 20(3), 23(3), 24(1)
+        @test g[4] == -2  # P1 has 2 on point 4
+        @test g[13] == -1 # P1 has 1 on point 13
+        @test g[17] == -2 # P1 has 2 on point 17
+        @test g[18] == -3 # P1 has 3 on point 18
+        @test g[20] == -3 # P1 has 3 on point 20
+        @test g[23] == -3 # P1 has 3 on point 23
+        @test g[24] == -1 # P1 has 1 on point 24
 
         # Test reset! with short_game
         g2 = initial_state(first_player=0)
         reset!(g2, short_game=true, first_player=0)
         sample_chance!(g2)
-        @test g2[4] == 2   # Verify short game position after reset
-        @test g2[16] == 3
+        @test g2[1] == 1   # Verify short game position after reset
+        @test g2[7] == 3
     end
 
     @testset "Doubles Only Mode" begin
@@ -1086,9 +1087,9 @@ end
         @test g.doubles_only == true
         sample_chance!(g)
 
-        # Verify short game position
-        @test g[4] == 2
-        @test g[16] == 3
+        # Verify short game position (symmetric: P0 at 1, 2, 5, 7, 8, 12, 21)
+        @test g[1] == 1
+        @test g[7] == 3
 
         # Verify doubles
         @test g.dice[1] == g.dice[2]
